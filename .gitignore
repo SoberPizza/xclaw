@@ -1,0 +1,22 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+.claude/
+.pytest_cache/
+OmniParser/
+weights/
+
+# Virtual environments
+.venv
+*.env
+uv.lock
+
+# Screenshots & parse logs
+screenshots/
+logs/
+
+
