@@ -1,15 +1,19 @@
-# X-Claw 命令参考
+# X-Claw Command Reference
 
-## 感知命令
+## Perception Commands
 
 ### `xclaw screen [--region x,y,w,h]`
-截取屏幕截图。
+
+Capture a screenshot of the screen.
+
 ```json
 {"status": "ok", "image_path": "screenshots/screen_xxx.png", "resolution": [w, h]}
 ```
 
 ### `xclaw parse <image_path>`
-用 OmniParser 解析截图，识别屏幕元素。
+
+Parse a screenshot using OmniParser to identify screen elements.
+
 ```json
 {
   "status": "ok",
@@ -23,11 +27,12 @@
 ```
 
 ### `xclaw look [--region x,y,w,h] [--depth l1|l2|l3]`
-截图 + 三层解析一步完成。`--depth` 控制解析深度（默认 `l3`）。
 
-- `l1`：仅感知，返回 `elements` 列表（同 `parse`）。
-- `l2`：感知 + 空间聚合，返回 `page.regions`（header/footer/sidebar/main）、`page.layout`（single/two-column/three-column）。
-- `l3`（默认）：感知 + 空间 + 语义，额外返回 `components`（card/navigation/search_box/action_row/input_field/modal）和 `page.scroll_position`。
+Capture screenshot and perform three-layer parsing in one step. The `--depth` flag controls parsing depth (default: `l3`). Always executes the complete L3 pipeline, unaffected by the scheduler. After execution, updates ContextState (confidence reset to 1.0).
+
+- `l1`: Perception only, returns `elements` list (same as `parse`).
+- `l2`: Perception + spatial aggregation, returns `page.regions` (header/footer/sidebar/main) and `page.layout` (single/two-column/three-column).
+- `l3` (default): Perception + spatial + semantic, additionally returns `components` (card/navigation/search_box/action_row/input_field/modal) and `page.scroll_position`.
 
 ```json
 {
@@ -51,18 +56,59 @@
 }
 ```
 
-L3 组件检测规则摘要：
-- **input_field**：`text` 类型、宽高比 > 6:1、宽度 ≥ 100px、内容 ≤ 15 字符。
-- **navigation**：位于 header/sidebar 区域、≥ 4 个短文本项（≤ 12 字符）。
-- **search_box**：宽输入框 ≥ 250px + 距离 < 80px 的 icon + 内容为空或含搜索关键词。
-- **action_row**：≥ 3 个 icon、内容 ≤ 10 字符、icon 数量 ≥ 非 icon 数量。
-- **card**：≥ 2 行、含 > 10 字符文本、宽度 < 80% 屏宽。
-- **modal**：居中（tolerance 10%）、不贴边、宽度 < 50% 屏宽、高度 < 60% 屏高。
+L3 Component Detection Rules Summary:
 
-## 浏览器命令
+- **input_field**: `text` type, aspect ratio > 6:1, width ≥ 100px, content ≤ 15 characters.
+- **navigation**: Located in header/sidebar area, ≥ 4 short text items (≤ 12 characters).
+- **search_box**: Wide input field ≥ 250px + icon within distance < 80px + content is empty or contains search keywords.
+- **action_row**: ≥ 3 icons, content ≤ 10 characters, icon count ≥ non-icon count.
+- **card**: ≥ 2 rows, contains > 10 character text, width < 80% screen width.
+- **modal**: Centered (tolerance 10%), not edge-aligned, width < 50% screen width, height < 60% screen height.
+
+### `xclaw peek`
+
+L1 pixel diff — No GPU usage, only compares pixel differences between the current and previous screenshot.
+
+```json
+{
+  "level": "L1",
+  "changed": true,
+  "diff_ratio": 0.032,
+  "change_regions": [[100, 100, 200, 200]],
+  "elapsed_ms": 48
+}
+```
+
+### `xclaw glance`
+
+L2 incremental parsing — First detect changed regions with peek, then run OmniParser only on changed regions and merge with cached elements. Degrades to L1 if no changes are detected.
+
+```json
+{
+  "level": "L2",
+  "merged_from_cache": 15,
+  "newly_parsed": 3,
+  "elapsed_ms": 380,
+  "page": { ... },
+  "components": { ... },
+  "timing": {"glance_ms": 380}
+}
+```
+
+### `xclaw status`
+
+Pixel-level diff change detection (same as `peek`, maintained for backward compatibility).
+
+```json
+{"changed": true, "diff_ratio": 0.032, "change_regions": [...], "elapsed_ms": 48}
+```
+
+## Browser Commands
 
 ### `xclaw tabs`
-列出当前 Chrome 所有打开的标签页（需 Chrome 以 `--remote-debugging-port=9222` 启动）。
+
+List all open tabs in Chrome (requires Chrome to be started with `--remote-debugging-port=9222`).
+
 ```json
 {
   "status": "ok",
@@ -74,25 +120,109 @@ L3 组件检测规则摘要：
 ```
 
 ### `xclaw tab <domain>`
-按域名模糊匹配并切换到目标标签页。例如 `xclaw tab github` 会匹配 `github.com`。
+
+Fuzzy match by domain and switch to target tab. For example, `xclaw tab github` will match `github.com`.
+
 ```json
-{"status": "ok", "action": "switch_tab", "id": "...", "title": "...", "url": "...", "domain": "github.com"}
+{
+  "status": "ok",
+  "action": "switch_tab",
+  "id": "...",
+  "title": "...",
+  "url": "...",
+  "domain": "github.com"
+}
 ```
 
-## 操作命令
+## Action Commands
 
-### `xclaw click <x> <y> [--double]`
-点击屏幕坐标。`--double` 双击。
+All action commands automatically run the smart perception scheduler after execution and return the `_perception` field. Use `--no-perceive` to skip.
 
-### `xclaw type <text>`
-在光标位置输入文本。支持中文（自动走剪贴板）。
+### `xclaw click <x> <y> [--double] [--no-perceive]`
 
-### `xclaw press <key>`
-按下单个按键。常用键：`enter`, `tab`, `escape`, `backspace`, `space`, `delete`。
-组合键示例：`ctrl+a`, `alt+f4`。
+Click at screen coordinates. `--double` performs a double-click.
 
-### `xclaw scroll <up|down> <amount>`
-滚动鼠标滚轮。`amount` 为滚动单位数。
+### `xclaw type <text> [--no-perceive]`
 
-### `xclaw wait <seconds>`
-等待指定秒数。
+Type text at the cursor position. Supports Chinese characters (automatically uses clipboard).
+
+### `xclaw press <key> [--no-perceive]`
+
+Press a single key. Common keys: `enter`, `tab`, `escape`, `backspace`, `space`, `delete`.
+Combination key examples: `ctrl+a`, `alt+f4`.
+
+### `xclaw scroll <up|down> <amount> [--x X] [--y Y] [--no-perceive]`
+
+Scroll the mouse wheel.
+
+**Parameters:**
+
+- `amount`: Number of scroll units (pixel-level scrolling, **recommended minimum: 500** for noticeable effect)
+- `--x`, `--y`: Optional coordinates to position mouse before scrolling (defaults: screen center)
+
+**Important Notes:**
+
+- The `amount` parameter operates at **pixel-level granularity**. Values below 500 may produce minimal or imperceptible results.
+- Always move the mouse to the target area first. Use `--x` and `--y` to position, or click before scrolling.
+- Effective for scrollable content (browser windows, text areas, lists).
+
+**Examples:**
+
+```bash
+# Scroll down 500 pixels at screen center
+xclaw scroll down 500 --no-perceive
+
+# Scroll up at specific coordinates
+xclaw scroll up 500 --x=500 --y=400 --no-perceive
+
+# Click first to focus, then scroll
+xclaw click 500 400
+xclaw scroll down 500
+```
+
+**Scroll Amount Guide:**
+| Amount | Visual Effect |
+|--------|---------------|
+| 5-100 | Barely perceptible |
+| 100-300 | Light scroll (a few lines) |
+| **500+** | **Recommended - clear visible scroll** |
+| 1000+ | Large scroll (major page movement) |
+
+### `xclaw wait <seconds> [--no-perceive]`
+
+Wait for the specified number of seconds.
+
+### `_perception` Field
+
+The output of action commands automatically includes a `_perception` field containing perception feedback:
+
+```json
+{
+  "status": "ok",
+  "action": "click",
+  "x": 500,
+  "y": 300,
+  "_perception": {
+    "level": "L1",
+    "confidence": 0.92,
+    "changed": false,
+    "diff_ratio": 0.003,
+    "elapsed_ms": 48
+  }
+}
+```
+
+**Perception Level Explanation**:
+| Level | Meaning | GPU | Latency |
+|-------|---------|-----|----------|
+| L0 | Confidence prediction, returns cached result | None | ~0ms |
+| L1 | Pixel diff, returns cache if unchanged | None | ~50ms |
+| L2 | Local crop parsing + cache merge | Minimal | ~400ms |
+| L3 | Complete three-layer pipeline (same as `look`) | Full | ~1.5s |
+
+**Auto-escalation Rules**:
+
+- Consecutive L0/L1 > 4 times → Force L3
+- Cache > 15 seconds → Force L3
+- Critical keys like `enter`/`f5` → Force L3
+- Any level error → Auto-escalate to next level

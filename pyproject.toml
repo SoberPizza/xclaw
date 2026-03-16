@@ -60,5 +60,14 @@ dev = [
     "pytest>=9.0.2",
 ]
 
+[tool.pytest.ini_options]
+markers = [
+    "gpu: requires GPU and OmniParser models",
+    "slow: tests that take more than 5 seconds",
+    "integration: full scheduler integration tests",
+    "bench: performance benchmarks",
+]
+addopts = "-m 'not gpu and not bench'"
+
 [project.scripts]
 xclaw = "xclaw.cli:main"

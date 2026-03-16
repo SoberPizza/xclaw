@@ -3,17 +3,45 @@
 import sys
 import json
 import base64
+import logging
 from pathlib import Path
+from typing import Optional
 
 from xclaw.config import OMNIPARSER_DIR, OMNIPARSER_CONFIG, LOGS_DIR
 from xclaw.core.perception.ocr import patch_paddleocr
 from xclaw.core.perception.types import RawElement
 
 
+# Global singleton instance
+_parser_instance: Optional['ScreenParser'] = None
+_parser_lock = __import__('threading').Lock()
+
+
 class ScreenParser:
     """Thin wrapper around OmniParser with standardized output."""
 
-    def __init__(self):
+    def __init__(self, suppress_logs: bool = False):
+        """Initialize ScreenParser with optional log suppression.
+
+        Args:
+            suppress_logs: If True, suppress initialization logs
+        """
+        self.suppress_logs = suppress_logs
+
+        if suppress_logs:
+            # Save current log level and suppress
+            self._saved_log_level = logging.getLogger().level
+            self._saved_handlers = []
+            for handler in logging.getLogger().handlers[:]:
+                self._saved_handlers.append((handler, handler.level))
+                handler.setLevel(logging.CRITICAL)
+            logging.getLogger().setLevel(logging.CRITICAL)
+
+            # Suppress warnings
+            import warnings
+            self._filters = []
+            warnings.filterwarnings("ignore")
+
         patch_paddleocr()
 
         omniparser_dir = str(OMNIPARSER_DIR)
@@ -23,6 +51,12 @@ class ScreenParser:
         from util.omniparser import Omniparser
 
         self._parser = Omniparser(OMNIPARSER_CONFIG)
+
+        if suppress_logs:
+            # Restore log level after initialization
+            logging.getLogger().setLevel(self._saved_log_level)
+            for handler, level in self._saved_handlers:
+                handler.setLevel(level)
 
     def parse_raw(self, image_path: str) -> tuple[list[RawElement], tuple[int, int]]:
         """Parse a screenshot into RawElement list + resolution.
@@ -101,3 +135,23 @@ class ScreenParser:
         )
 
         return result
+
+
+def get_parser(suppress_logs: bool = False) -> ScreenParser:
+    """Get the global ScreenParser singleton instance.
+
+    Args:
+        suppress_logs: If True, suppress logs during initialization (only on first call)
+
+    Returns:
+        The global ScreenParser instance
+    """
+    global _parser_instance
+
+    if _parser_instance is None:
+        with _parser_lock:
+            # Double-check pattern to avoid race conditions
+            if _parser_instance is None:
+                _parser_instance = ScreenParser(suppress_logs=suppress_logs)
+
+    return _parser_instance

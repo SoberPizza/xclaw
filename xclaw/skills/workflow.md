@@ -1,40 +1,78 @@
-# X-Claw 操作规范
+# X-Claw Operating Guidelines
 
-## 规则
+## Rules
 
-1. **先看再做**：每次操作前先执行 `xclaw look` 获取当前屏幕状态。
-2. **不盲操作**：不要凭记忆点击坐标，必须基于最新 `look` 结果中的 `center` 坐标。
-3. **输入后确认**：输入文本后，先 `look` 找到目标按钮，再 `click` 其坐标。
-4. **用 id 定位**：`elements` 列表中每个元素有 `id`，用 `content` 字段匹配目标，用 `center` 坐标操作。
-5. **操作后验证**：执行关键操作后再次 `look`，确认操作生效。
-6. **等待加载**：页面跳转或加载时用 `xclaw wait` 等待，再 `look` 确认。
-7. **利用结构化信息**：优先使用 `page.regions` 和 `components` 来理解页面布局，而非逐个扫描元素。
+1. **Look before you act**: Execute `xclaw look` before your first action to get the current screen state.
+2. **No blind operations**: Don't click coordinates from memory; always use the `center` coordinates from the latest perception results.
+3. **Confirm after input**: After typing text, check the `_perception` feedback; if confidence is low or there are changes, run `look` to confirm.
+4. **Use id for positioning**: Each element in the `elements` list has an `id`; match targets using the `content` field and operate using the `center` coordinate.
+5. **Trust auto-perception**: Action commands automatically return the `_perception` field, usually no need for manual `look`.
+6. **Wait for loading**: Use `xclaw wait` during page transitions or loading; perception will automatically detect changes.
+7. **Leverage structured information**: Prioritize using `page.regions` and `components` to understand page layout rather than scanning elements one by one.
 
-## 理解 look 输出
+## Perception Feedback Workflow
 
-`xclaw look` 默认返回三层结构化信息：
+Action commands (`click`/`type`/`press`/`scroll`/`wait`) automatically run the smart perception scheduler after execution. The returned `_perception` field tells you:
 
-- **`page.regions`**：页面区域（header / main / footer / sidebar），快速定位目标所在区域。
-- **`page.layout`**：布局类型（single / two-column / three-column）。
-- **`page.scroll_position`**：滚动位置（top / middle / bottom），判断是否需要滚动。
-- **`page.modal_open`**：若存在则表示检测到弹窗，应优先处理弹窗。
-- **`components`**：语义组件（card / navigation / search_box / action_row / input_field / modal），每个组件包含 `element_ids` 可回溯到具体元素。
+- **`level`**: Which perception level was used (L0/L1/L2/L3)
+- **`confidence`**: Confidence level of the current screen cache (0-1)
+- **`changed`**: Whether the screen has changed
+- **`diff_ratio`**: Ratio of changes
 
-如果只需要元素列表，使用 `xclaw look --depth l1`。
-如果只需要区域布局，使用 `xclaw look --depth l2`。
+### When You Need Manual `look`
 
-## 典型流程
+- `_perception.level` is `L0` or `L1` and you are **uncertain** if the cache is accurate
+- Need a complete element list (L0/L1 only return summaries)
+- Need precise `center` coordinates to perform operations
+- Before the first action (no cache)
+
+### When You Don't Need Manual `look`
+
+- `_perception.level` is `L2` or `L3`: Full parsing results already available
+- `_perception.changed` is `false`: Screen unchanged, cache still valid
+- `_perception.confidence` > 0.8: High confidence, cache is trustworthy
+- Continuous text input (`type`): Small screen changes, confidence decays slowly
+
+## Understanding `look` Output
+
+`xclaw look` returns three layers of structured information by default:
+
+- **`page.regions`**: Page regions (header / main / footer / sidebar), quickly locate which region the target is in.
+- **`page.layout`**: Layout type (single / two-column / three-column).
+- **`page.scroll_position`**: Scroll position (top / middle / bottom), determine if scrolling is needed.
+- **`page.modal_open`**: If present, indicates a modal is detected; should prioritize handling the modal.
+- **`components`**: Semantic components (card / navigation / search_box / action_row / input_field / modal), each component contains `element_ids` to trace back to specific elements.
+
+If you only need the element list, use `xclaw look --depth l1`.
+If you only need region layout, use `xclaw look --depth l2`.
+
+## Typical Workflow
 
 ```
-xclaw look                          # 1. 观察屏幕（获取结构化页面信息）
-# → page.regions 显示 header 区域 + main 区域
-# → components 中有 search_box，element_ids=[3,5]
-# → 找到 elements 中 id=5 的输入框，center=[640, 30]
-xclaw click 640 30                  # 2. 点击搜索框
-xclaw type "hello world"            # 3. 输入文本
-xclaw look                          # 4. 再次观察，找到"搜索"按钮
-# → 找到 content="搜索" 按钮，center=[750, 30]
-xclaw click 750 30                  # 5. 点击按钮
-xclaw wait 2                        # 6. 等待加载
-xclaw look                          # 7. 确认结果
+xclaw look                          # 1. Initial observation (complete L3 parsing)
+# → page.regions, components, elements
+xclaw click 640 30                  # 2. Click search box
+# → _perception: {level: "L1", changed: false, confidence: 0.75}
+# Screen unchanged, continue
+xclaw type "hello world"            # 3. Type text
+# → _perception: {level: "L0", confidence: 0.71}
+# Confidence acceptable, no need for look
+xclaw press enter                   # 4. Press enter (critical key → auto L3)
+# → _perception: {level: "L3", confidence: 1.0, ...}
+# Automatically returns complete parsing results with new page info
+xclaw wait 2                        # 5. Wait for loading
+# → _perception: {level: "L1", changed: true, diff_ratio: 0.25}
+# Large change detected, may need look
+xclaw look                          # 6. Confirm new page state
+```
+
+## Using `--no-perceive`
+
+When you only need to execute operations without caring about perception results, use `--no-perceive` to skip auto-perception and save time:
+
+```
+xclaw type "a" --no-perceive        # Quick input, don't wait for perception
+xclaw type "b" --no-perceive
+xclaw type "c" --no-perceive
+xclaw look                          # Unified observation after input
 ```
