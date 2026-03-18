@@ -43,7 +43,6 @@ xclaw/
 | 变量 | 说明 | 默认 |
 |------|------|------|
 | `XCLAW_HUMANIZE` | 设为 `1` 启用人性化鼠标移动和打字延迟 | `0` |
-| `PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK` | PaddleOCR 需要，设为 `True` | — |
 | `XCLAW_CDP_HOST` | Chrome DevTools Protocol 地址 | `127.0.0.1` |
 | `XCLAW_CDP_PORT` | Chrome DevTools Protocol 端口 | `9222` |
 | `XCLAW_HOME` | 项目根目录路径（仅非 editable 安装时需要） | 自动推算 |
@@ -52,7 +51,7 @@ xclaw/
 
 - OmniParser 源码位于 `OmniParser/` 目录，**不要修改其中的文件**。
 - `parser.py` 通过 `sys.path.insert` 在运行时注入 `OmniParser/` 到模块搜索路径。
-- PaddleOCR 兼容性：`parser.py` 中有 `_patch_paddleocr()` 补丁，用于过滤新版 PaddleOCR 不认识的旧参数。
+- PaddleOCR 已移除：`ocr.py` 中的 `install_paddleocr_stub()` 会在 OmniParser 导入前注入空壳模块，使其模块级 `from paddleocr import PaddleOCR` 成为无害的 no-op（OmniParser 实际走 EasyOCR 分支）。
 - `transformers` 版本锁定在 `>=4.40.0,<4.46.0`，更高版本会导致 Florence2 模型加载失败。
 - 模型权重存放在 `weights/` 目录（`icon_detect/model.pt` + `icon_caption_florence/`），通过 `huggingface-hub` 下载。
 

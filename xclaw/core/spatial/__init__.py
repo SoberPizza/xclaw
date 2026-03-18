@@ -1,1 +1,1 @@
-"""L2 spatial aggregation layer — row/block/column/region clustering."""
+"""L2 spatial aggregation layer — row/column detection + reading order."""

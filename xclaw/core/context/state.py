@@ -69,7 +69,7 @@ class ContextState:
             tmp.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
             os.replace(str(tmp), str(CONTEXT_STATE_PATH))
         except OSError:
-            pass  # 状态丢失可恢复，下次会 force L3
+            pass  # 状态丢失可恢复，下次会 force full pipeline
 
     @classmethod
     def load(cls) -> ContextState | None:
@@ -125,7 +125,7 @@ class ContextState:
         else:
             self.consecutive_cheap_count = 0
 
-        if level == "L3":
+        if level in ("L2", "L3"):
             self.confidence = 1.0
 
     # ── Queries ──

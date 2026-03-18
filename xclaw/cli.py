@@ -9,6 +9,32 @@ def _output(data: dict):
     click.echo(json.dumps(data, ensure_ascii=False))
 
 
+def _extract_ts(image_path: str) -> int | None:
+    """Extract millisecond timestamp from 'screen_1234567890123.png'."""
+    import re
+    m = re.search(r"screen_(\d+)\.", image_path)
+    return int(m.group(1)) if m else None
+
+
+def _save_to_logs(result_dict: dict, *, prefix: str = "screen", timestamp: int | None = None) -> str | None:
+    """Persist result to LOGS_DIR. Returns file path or None on failure."""
+    from xclaw.config import LOGS_DIR
+    try:
+        LOGS_DIR.mkdir(exist_ok=True)
+        if timestamp is None:
+            timestamp = int(time.time() * 1000)
+        log_file = LOGS_DIR / f"{prefix}_{timestamp}.json"
+        with open(log_file, "w", encoding="utf-8") as f:
+            json.dump(result_dict, f, ensure_ascii=False, indent=2)
+        latest_file = LOGS_DIR / f"{prefix}.json"
+        with open(latest_file, "w", encoding="utf-8") as f:
+            json.dump(result_dict, f, ensure_ascii=False, indent=2)
+        return str(log_file)
+    except Exception as exc:
+        click.echo(f"Warning: failed to save log: {exc}", err=True)
+        return None
+
+
 def _parse_region(region_str: str | None):
     """Parse 'x,y,w,h' string into tuple or return None."""
     if not region_str:
@@ -133,8 +159,6 @@ def parse(image_path, clean):
     import logging
     import sys
     import io
-    from pathlib import Path
-    from xclaw.config import LOGS_DIR
 
     if clean:
         # Redirect stderr to suppress C/C++ warnings
@@ -152,17 +176,7 @@ def parse(image_path, clean):
         parser = get_parser(suppress_logs=clean)
         result = parser.parse(image_path)
 
-        # Persist result to logs folder
-        LOGS_DIR.mkdir(exist_ok=True)
-        timestamp = int(time.time() * 1000)
-        log_file = LOGS_DIR / f"screen_{timestamp}.json"
-        with open(log_file, "w", encoding="utf-8") as f:
-            json.dump(result, f, ensure_ascii=False, indent=2)
-
-        latest_file = LOGS_DIR / "screen.json"
-        with open(latest_file, "w", encoding="utf-8") as f:
-            json.dump(result, f, ensure_ascii=False, indent=2)
-
+        _save_to_logs(result, timestamp=_extract_ts(image_path))
         _output(result)
     finally:
         if clean:
@@ -194,7 +208,6 @@ def init():
             "message": "X-Claw initialization complete",
             "components": {
                 "omniparser": "ready",
-                "paddleocr": "ready",
                 "device": "cuda" if __import__('torch').cuda.is_available() else "cpu",
             }
         })
@@ -209,21 +222,19 @@ def init():
 
 @main.command()
 @click.option("--region", default=None, help="x,y,w,h")
-@click.option("--depth", type=click.Choice(["l1", "l2", "l3"]), default="l3",
-              help="Pipeline depth: l1=perception, l2=+spatial, l3=+semantic (default)")
+@click.option("--depth", type=click.Choice(["l1", "l2"]), default="l2",
+              help="Pipeline depth: l1=perception, l2=+spatial (default)")
 @click.option("--clean", is_flag=True, help="Suppress logs/warnings for clean JSON output")
 def look(region, depth, clean):
-    """Screenshot + three-layer pipeline in one step."""
+    """Screenshot + two-layer pipeline in one step."""
     import logging
     import sys
     import io
-    from pathlib import Path
     from xclaw.core.screen import take_screenshot
     from xclaw.core.pipeline import run_pipeline
     from xclaw.core.cache import get_cache
     from xclaw.core.context.state import ContextState
     from xclaw.core.context.glance import _elements_to_dicts
-    from xclaw.config import LOGS_DIR
 
     # Suppress all logs if --clean flag is set
     if clean:
@@ -245,40 +256,26 @@ def look(region, depth, clean):
         result = run_pipeline(
             screen_result["image_path"],
             skip_l2=(depth == "l1"),
-            skip_l3=(depth in ("l1", "l2")),
         )
         get_cache().put(screen_result["image_path"], result)
 
         # Update ContextState after look
-        level_map = {"l1": "L1", "l2": "L2", "l3": "L3"}
+        level_map = {"l1": "L1", "l2": "L2"}
         level = level_map[depth]
+        result_dict = result.to_dict()
         state = ContextState.load() or ContextState()
         state.record_perception(
             level,
-            result_dict=result.to_dict(),
+            result_dict=result_dict,
             screenshot_path=screen_result["image_path"],
             elements=_elements_to_dicts(result.elements),
             resolution=result.resolution,
         )
-        if level == "L3":
+        if level == "L2":
             state.confidence = 1.0
         state.save()
 
-        # Persist parsing result to logs folder
-        result_dict = result.to_dict()
-        LOGS_DIR.mkdir(exist_ok=True)
-
-        # Save with timestamp filename
-        timestamp = int(time.time() * 1000)
-        log_file = LOGS_DIR / f"screen_{timestamp}.json"
-        with open(log_file, "w", encoding="utf-8") as f:
-            json.dump(result_dict, f, ensure_ascii=False, indent=2)
-
-        # Also update screen.json as latest result
-        latest_file = LOGS_DIR / "screen.json"
-        with open(latest_file, "w", encoding="utf-8") as f:
-            json.dump(result_dict, f, ensure_ascii=False, indent=2)
-
+        _save_to_logs(result_dict, timestamp=_extract_ts(screen_result["image_path"]))
         _output(result_dict)
     finally:
         if clean:
@@ -317,7 +314,6 @@ def peek_cmd():
     from xclaw.core.screen import take_screenshot
     from xclaw.core.context.state import ContextState
     from xclaw.core.context.peek import peek
-    from xclaw.config import LOGS_DIR
 
     screen_result = take_screenshot()
     state = ContextState.load() or ContextState()
@@ -334,17 +330,7 @@ def peek_cmd():
         "elapsed_ms": result.elapsed_ms,
     }
 
-    # Persist result to logs folder
-    LOGS_DIR.mkdir(exist_ok=True)
-    timestamp = int(time.time() * 1000)
-    log_file = LOGS_DIR / f"screen_{timestamp}.json"
-    with open(log_file, "w", encoding="utf-8") as f:
-        json.dump(result_dict, f, ensure_ascii=False, indent=2)
-
-    latest_file = LOGS_DIR / "screen.json"
-    with open(latest_file, "w", encoding="utf-8") as f:
-        json.dump(result_dict, f, ensure_ascii=False, indent=2)
-
+    _save_to_logs(result_dict, timestamp=_extract_ts(screen_result["image_path"]))
     _output(result_dict)
 
 
@@ -355,7 +341,6 @@ def glance_cmd():
     from xclaw.core.context.state import ContextState
     from xclaw.core.context.peek import peek
     from xclaw.core.context.glance import glance, _elements_to_dicts
-    from xclaw.config import LOGS_DIR
 
     screen_result = take_screenshot()
     state = ContextState.load() or ContextState()
@@ -369,17 +354,7 @@ def glance_cmd():
             "elapsed_ms": peek_result.elapsed_ms,
         }
 
-        # Persist result to logs folder
-        LOGS_DIR.mkdir(exist_ok=True)
-        timestamp = int(time.time() * 1000)
-        log_file = LOGS_DIR / f"screen_{timestamp}.json"
-        with open(log_file, "w", encoding="utf-8") as f:
-            json.dump(result_dict, f, ensure_ascii=False, indent=2)
-
-        latest_file = LOGS_DIR / "screen.json"
-        with open(latest_file, "w", encoding="utf-8") as f:
-            json.dump(result_dict, f, ensure_ascii=False, indent=2)
-
+        _save_to_logs(result_dict, timestamp=_extract_ts(screen_result["image_path"]))
         _output(result_dict)
         return
 
@@ -393,17 +368,7 @@ def glance_cmd():
         result_dict = {"level": "L2", "error": f"glance failed: {exc}", "changed": True,
                        "diff_ratio": peek_result.diff_ratio}
 
-        # Persist error result to logs folder
-        LOGS_DIR.mkdir(exist_ok=True)
-        timestamp = int(time.time() * 1000)
-        log_file = LOGS_DIR / f"screen_{timestamp}.json"
-        with open(log_file, "w", encoding="utf-8") as f:
-            json.dump(result_dict, f, ensure_ascii=False, indent=2)
-
-        latest_file = LOGS_DIR / "screen.json"
-        with open(latest_file, "w", encoding="utf-8") as f:
-            json.dump(result_dict, f, ensure_ascii=False, indent=2)
-
+        _save_to_logs(result_dict, timestamp=_extract_ts(screen_result["image_path"]))
         _output(result_dict)
         return
 
@@ -422,17 +387,7 @@ def glance_cmd():
     result_dict["newly_parsed"] = glance_result.newly_parsed
     result_dict["elapsed_ms"] = glance_result.elapsed_ms
 
-    # Persist result to logs folder
-    LOGS_DIR.mkdir(exist_ok=True)
-    timestamp = int(time.time() * 1000)
-    log_file = LOGS_DIR / f"screen_{timestamp}.json"
-    with open(log_file, "w", encoding="utf-8") as f:
-        json.dump(result_dict, f, ensure_ascii=False, indent=2)
-
-    latest_file = LOGS_DIR / "screen.json"
-    with open(latest_file, "w", encoding="utf-8") as f:
-        json.dump(result_dict, f, ensure_ascii=False, indent=2)
-
+    _save_to_logs(result_dict, timestamp=_extract_ts(screen_result["image_path"]))
     _output(result_dict)
 
 

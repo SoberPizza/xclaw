@@ -15,32 +15,10 @@ class Row:
 
 
 @dataclass(slots=True)
-class Block:
-    """A vertical group of consecutive rows separated by significant gaps."""
-
-    id: int
-    y_start: int
-    y_end: int
-    row_ids: list[int] = field(default_factory=list)
-    gap_above: float = 0.0
-
-
-@dataclass(slots=True)
 class Column:
-    """A vertical strip of elements aligned on the same x1 coordinate."""
+    """A vertical strip of elements aligned on overlapping x-ranges."""
 
     id: int
     x_start: int
     x_end: int
     element_ids: list[int] = field(default_factory=list)
-
-
-@dataclass(slots=True)
-class Region:
-    """A classified page region (header / footer / sidebar / main)."""
-
-    id: int
-    role: str  # "header" | "footer" | "sidebar" | "main"
-    bbox: tuple[int, int, int, int]  # (x1, y1, x2, y2)
-    block_ids: list[int] = field(default_factory=list)
-    pattern: str | None = None  # "feed" | "list" | None

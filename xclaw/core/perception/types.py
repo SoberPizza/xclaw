@@ -7,7 +7,7 @@ from dataclasses import dataclass
 class RawElement:
     """A single UI element detected by OmniParser.
 
-    Frozen to guarantee L2/L3 never accidentally mutate L1 output.
+    Frozen to guarantee L2 never accidentally mutates L1 output.
     Tuples (not lists) for hashability and cache-friendliness.
     """
 

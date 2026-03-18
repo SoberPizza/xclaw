@@ -4,8 +4,7 @@ import tempfile
 import os
 
 from xclaw.core.perception.types import RawElement
-from xclaw.core.spatial.types import Region
-from xclaw.core.semantic.types import Component, ComponentType
+from xclaw.core.spatial.types import Column
 from xclaw.core.pipeline import PipelineResult
 from xclaw.core.cache import ResultCache
 
@@ -17,13 +16,12 @@ def _make_temp_image(content: bytes = b"PNG_FAKE_DATA") -> str:
     return path
 
 
-def _make_result(elements=None, regions=None, components=None):
+def _make_result(elements=None, columns=None):
     return PipelineResult(
         elements=elements or [],
         resolution=(1920, 1080),
         image_path="test.png",
-        regions=regions,
-        components=components,
+        columns=columns,
     )
 
 
@@ -113,28 +111,22 @@ class TestLookupPoint:
         assert hit is None
         os.unlink(path)
 
-    def test_finds_component_and_region(self):
+    def test_finds_column(self):
         cache = ResultCache()
         path = _make_temp_image()
         elem = RawElement(
             id=0, type="text", bbox=(100, 100, 200, 200),
             center=(150, 150), content="test",
         )
-        comp = Component(
-            id=0, type=ComponentType.CARD,
-            bbox=(50, 50, 250, 250), element_ids=[0],
+        col = Column(
+            id=0, x_start=50, x_end=250,
+            element_ids=[0],
         )
-        region = Region(
-            id=0, role="main",
-            bbox=(0, 0, 500, 500), block_ids=[0],
-        )
-        result = _make_result(elements=[elem], regions=[region], components=[comp])
+        result = _make_result(elements=[elem], columns=[col])
         cache.put(path, result)
 
         hit = cache.lookup_point(path, 150, 150)
         assert "element" in hit
-        assert "component" in hit
-        assert hit["component"]["type"] == "card"
-        assert "region" in hit
-        assert hit["region"]["role"] == "main"
+        assert "column" in hit
+        assert hit["column"]["id"] == 0
         os.unlink(path)

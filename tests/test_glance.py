@@ -66,12 +66,9 @@ class TestGlance:
     @patch("xclaw.core.context.glance._crop_and_parse")
     def test_keeps_unchanged_cache(self, mock_crop):
         """Elements outside change regions should be kept from cache."""
-        # Cached element at top-left (far from change region)
         cached = _elem(0, bbox=(0, 0, 50, 50), content="cached")
-        # Change region is at bottom-right
         change_regions = [(800, 800, 900, 900)]
 
-        # Mock returns a new element for the changed region
         new_elem = _elem(1, bbox=(810, 810, 890, 890), content="new")
         mock_crop.return_value = [new_elem]
 
@@ -85,7 +82,6 @@ class TestGlance:
         assert isinstance(result, GlanceResult)
         assert result.merged_from_cache >= 1
         assert result.newly_parsed >= 1
-        # Both elements should be in the pipeline result
         contents = {e.content for e in result.pipeline_result.elements}
         assert "cached" in contents
         assert "new" in contents
@@ -93,7 +89,6 @@ class TestGlance:
     @patch("xclaw.core.context.glance._crop_and_parse")
     def test_discards_overlapping_cache(self, mock_crop):
         """Cached elements overlapping with change regions should be discarded."""
-        # Cached element overlaps heavily with change region
         cached = _elem(0, bbox=(100, 100, 200, 200), content="stale")
         change_regions = [(90, 90, 210, 210)]
 
@@ -112,7 +107,7 @@ class TestGlance:
         assert "fresh" in contents
 
     @patch("xclaw.core.context.glance.run_pipeline")
-    def test_large_change_falls_back_to_l3(self, mock_pipeline):
+    def test_large_change_falls_back_to_full_pipeline(self, mock_pipeline):
         """If change area > 60% of screen, fall back to full pipeline."""
         from xclaw.core.pipeline import PipelineResult
         mock_result = PipelineResult(
@@ -123,7 +118,6 @@ class TestGlance:
         mock_pipeline.return_value = mock_result
 
         state = ContextState(cached_resolution=(100, 100))
-        # Change region covers >60% of 100x100 screen
         change_regions = [(0, 0, 90, 90)]  # 8100 / 10000 = 81%
 
         result = glance("current.png", change_regions, state)
@@ -148,8 +142,8 @@ class TestGlance:
         assert result.newly_parsed == 0
 
     @patch("xclaw.core.context.glance._crop_and_parse")
-    def test_pipeline_result_has_l2_l3(self, mock_crop):
-        """Result should have L2/L3 fields populated."""
+    def test_pipeline_result_has_l2(self, mock_crop):
+        """Result should have L2 fields populated."""
         mock_crop.return_value = [
             _elem(0, bbox=(100, 100, 200, 200), content="item")
         ]
@@ -161,11 +155,8 @@ class TestGlance:
 
         result = glance("current.png", [(90, 90, 210, 210)], state)
         pr = result.pipeline_result
-        assert pr.rows is not None
-        assert pr.blocks is not None
-        assert pr.regions is not None
-        assert pr.components is not None
-        assert pr.context is not None
+        assert pr.columns is not None
+        assert pr.reading_order is not None
 
 
 class TestGlanceScroll:

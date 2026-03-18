@@ -8,7 +8,6 @@ from pathlib import Path
 
 from xclaw.config import CACHE_MAX_SIZE
 from xclaw.core.pipeline import PipelineResult
-from xclaw.core.semantic.types import ComponentType
 
 
 def _image_key(image_path: str) -> str:
@@ -46,10 +45,10 @@ class ResultCache:
         return self._store[key]
 
     def lookup_point(self, image_path: str, x: int, y: int) -> dict | None:
-        """Reverse-lookup: find what element/component/region contains (x, y).
+        """Reverse-lookup: find what element/column contains (x, y).
 
         Returns:
-            {"element": {...}, "component": {...}, "region": {...}} or None
+            {"element": {...}, "column": {...}} or None
         """
         result = self.get(image_path)
         if result is None:
@@ -68,25 +67,14 @@ class ResultCache:
                 }
                 break
 
-        # Find component containing the point
-        if result.components:
-            for comp in result.components:
-                if comp.bbox[0] <= x <= comp.bbox[2] and comp.bbox[1] <= y <= comp.bbox[3]:
-                    hit["component"] = {
-                        "id": comp.id,
-                        "type": comp.type.value,
-                        "bbox": list(comp.bbox),
-                    }
-                    break
-
-        # Find region containing the point
-        if result.regions:
-            for region in result.regions:
-                if region.bbox[0] <= x <= region.bbox[2] and region.bbox[1] <= y <= region.bbox[3]:
-                    hit["region"] = {
-                        "id": region.id,
-                        "role": region.role,
-                        "bbox": list(region.bbox),
+        # Find column containing the point
+        if result.columns:
+            for col in result.columns:
+                if col.x_start <= x <= col.x_end:
+                    hit["column"] = {
+                        "id": col.id,
+                        "x_start": col.x_start,
+                        "x_end": col.x_end,
                     }
                     break
 

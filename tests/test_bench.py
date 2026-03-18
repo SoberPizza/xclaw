@@ -15,7 +15,7 @@ from xclaw.core.context.state import ContextState
 from xclaw.core.context.peek import peek
 from xclaw.core.context.predict import predict
 from xclaw.core.context.scroll import analyze_scroll
-from xclaw.core.context.glance import _run_l2_l3, _elements_to_dicts
+from xclaw.core.context.glance import _run_l2, _elements_to_dicts
 
 from conftest import _elem, _build_elements, SCREENSHOTS_DIR
 
@@ -129,16 +129,16 @@ class TestBenchScroll:
         assert statistics.mean(times) < 500, "ORB scroll analysis should be < 500ms"
 
 
-class TestBenchSpatialSemantic:
-    def test_bench_spatial_semantic(self):
-        """Run L2+L3 CPU pipeline on pre-built elements."""
+class TestBenchSpatial:
+    def test_bench_spatial(self):
+        """Run L2 CPU pipeline on pre-built elements."""
         elements = _build_elements(30, (1920, 1080))
 
         def run():
-            _run_l2_l3(elements, (1920, 1080), "bench.png")
+            _run_l2(elements, (1920, 1080), "bench.png")
 
-        times = _bench(run, label="l2_l3_cpu")
-        assert statistics.mean(times) < 200, "L2+L3 CPU should be < 200ms"
+        times = _bench(run, label="l2_cpu")
+        assert statistics.mean(times) < 200, "L2 CPU should be < 200ms"
 
 
 class TestBenchStatePersistence:

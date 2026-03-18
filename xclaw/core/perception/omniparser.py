@@ -1,14 +1,17 @@
 """OmniParser wrapper with standardized output."""
 
 import sys
+import os
 import json
 import base64
 import logging
+import contextlib
+import warnings
 from pathlib import Path
 from typing import Optional
 
 from xclaw.config import OMNIPARSER_DIR, OMNIPARSER_CONFIG, LOGS_DIR
-from xclaw.core.perception.ocr import patch_paddleocr
+from xclaw.core.perception.ocr import install_paddleocr_stub
 from xclaw.core.perception.types import RawElement
 
 
@@ -28,6 +31,9 @@ class ScreenParser:
         """
         self.suppress_logs = suppress_logs
 
+        # Always filter noisy third-party warnings
+        warnings.filterwarnings("ignore", message=".*num_beams.*")
+
         if suppress_logs:
             # Save current log level and suppress
             self._saved_log_level = logging.getLogger().level
@@ -36,13 +42,9 @@ class ScreenParser:
                 self._saved_handlers.append((handler, handler.level))
                 handler.setLevel(logging.CRITICAL)
             logging.getLogger().setLevel(logging.CRITICAL)
-
-            # Suppress warnings
-            import warnings
-            self._filters = []
             warnings.filterwarnings("ignore")
 
-        patch_paddleocr()
+        install_paddleocr_stub()
 
         omniparser_dir = str(OMNIPARSER_DIR)
         if omniparser_dir not in sys.path:
@@ -50,7 +52,9 @@ class ScreenParser:
 
         from util.omniparser import Omniparser
 
-        self._parser = Omniparser(OMNIPARSER_CONFIG)
+        # OmniParser prints to stdout during init — redirect to devnull
+        with open(os.devnull, "w") as devnull, contextlib.redirect_stdout(devnull):
+            self._parser = Omniparser(OMNIPARSER_CONFIG)
 
         if suppress_logs:
             # Restore log level after initialization
@@ -61,7 +65,7 @@ class ScreenParser:
     def parse_raw(self, image_path: str) -> tuple[list[RawElement], tuple[int, int]]:
         """Parse a screenshot into RawElement list + resolution.
 
-        This is the pipeline-friendly interface used by L2/L3.
+        This is the pipeline-friendly interface used by L2.
 
         Returns:
             (elements, (width, height))
@@ -74,7 +78,9 @@ class ScreenParser:
         with open(image_path, "rb") as f:
             image_base64 = base64.b64encode(f.read()).decode("ascii")
 
-        _labeled_img, parsed_content_list = self._parser.parse(image_base64)
+        # OmniParser prints debug info to stdout during parse — redirect to devnull
+        with open(os.devnull, "w") as devnull, contextlib.redirect_stdout(devnull):
+            _labeled_img, parsed_content_list = self._parser.parse(image_base64)
 
         elements = []
         for i, item in enumerate(parsed_content_list):

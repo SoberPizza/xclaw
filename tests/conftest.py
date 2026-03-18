@@ -13,7 +13,7 @@ import pytest
 from xclaw.core.context.state import ContextState
 from xclaw.core.perception.types import RawElement
 from xclaw.core.pipeline import PipelineResult
-from xclaw.core.context.glance import _run_l2_l3, _elements_to_dicts
+from xclaw.core.context.glance import _run_l2, _elements_to_dicts
 
 # ── Directories ──
 
@@ -117,15 +117,15 @@ def mock_take_screenshot(monkeypatch):
 def mock_run_pipeline(monkeypatch):
     """Patch run_pipeline in both scheduler and glance; return pre-built PipelineResult.
 
-    The mock builds a PipelineResult by running _run_l2_l3 on CPU with synthetic elements,
-    so L2/L3 spatial+semantic layers execute for real.
+    The mock builds a PipelineResult by running _run_l2 on CPU with synthetic elements,
+    so L2 spatial layer executes for real.
     """
     elements = _build_elements(10, (1920, 1080))
-    result = _run_l2_l3(elements, (1920, 1080), "synthetic.png")
+    result = _run_l2(elements, (1920, 1080), "synthetic.png")
     result_dict = result.to_dict()
 
     def _fake_run_pipeline(image_path, **kwargs):
-        r = _run_l2_l3(elements, (1920, 1080), image_path)
+        r = _run_l2(elements, (1920, 1080), image_path)
         return r
 
     patcher_sched = patch("xclaw.core.context.scheduler.run_pipeline", side_effect=_fake_run_pipeline)

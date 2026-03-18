@@ -32,34 +32,31 @@ class TestSchedulerL0CacheHit:
     def test_l0_high_confidence_returns_cache(
         self, state_dir, mock_take_screenshot, make_gray_image, tmp_path,
     ):
-        # Pre-populate state: confidence=1.0, recent L3, cached elements
         elements = _build_elements(5)
         state = ContextState(
             last_screenshot_path=make_gray_image(128, name="prev.png"),
-            last_result_dict={"level": "L3", "data": "cached"},
-            last_perception_level="L3",
+            last_result_dict={"level": "L2", "data": "cached"},
+            last_perception_level="L2",
             last_perception_time=time.time(),
             cached_elements=_elements_to_dicts(elements),
             cached_resolution=(1920, 1080),
             confidence=1.0,
             consecutive_cheap_count=0,
         )
-        # Record a "type" action (decay 0.95 → confidence 0.95 → L0)
         state.record_action("type", {"text": "hello"})
         state.save()
 
         screenshot = make_gray_image(128, name="curr.png")
         mock_take_screenshot.set_next(screenshot)
 
-        # Ensure run_pipeline / _crop_and_parse are NEVER called
-        with patch("xclaw.core.context.scheduler.run_pipeline", side_effect=AssertionError("L3 should not run")), \
+        with patch("xclaw.core.context.scheduler.run_pipeline", side_effect=AssertionError("L2 should not run")), \
              patch("xclaw.core.context.glance._crop_and_parse", side_effect=AssertionError("glance should not run")):
             result = schedule({"status": "ok", "action": "type", "text": "hello"})
 
         assert result.level == "L0"
         assert result.confidence > 0.8
         assert result.escalation_path == ["L0"]
-        assert result.elapsed_ms < 500  # should be very fast (sub-100ms typical)
+        assert result.elapsed_ms < 500
 
 
 # ---------------------------------------------------------------------------
@@ -73,29 +70,25 @@ class TestSchedulerL0ThenL1NoChange:
         self, state_dir, mock_take_screenshot, mock_run_pipeline, screenshot_pair,
     ):
         path_a, path_b = screenshot_pair
-        # Use the SAME image for both prev and current
         state = ContextState(
             last_screenshot_path=path_a,
             last_result_dict=mock_run_pipeline.pipeline_dict,
-            last_perception_level="L3",
+            last_perception_level="L2",
             last_perception_time=time.time(),
             cached_elements=_elements_to_dicts(mock_run_pipeline.raw_elements),
             cached_resolution=(1920, 1080),
             confidence=1.0,
             consecutive_cheap_count=0,
         )
-        # click decay = 0.75 → confidence 0.75 → predict suggests L1
         state.record_action("click", {"x": 100, "y": 200})
         state.save()
 
-        # Return the SAME screenshot → diff should be 0
         mock_take_screenshot.set_next(path_a)
 
         result = schedule({"status": "ok", "action": "click", "x": 100, "y": 200})
 
         assert result.level == "L1"
         assert result.confidence >= 0.5
-        # The perception dict should contain diff info
         assert result.perception.get("_perception", {}).get("changed") is False or \
                result.perception.get("_perception", {}).get("diff_ratio", 1.0) == 0.0
 
@@ -113,18 +106,16 @@ class TestSchedulerL2MinorChange:
     ):
         """Synthetic images: gray base vs gray+small rectangle → minor diff → L2."""
         prev_path = make_gray_image(128, name="l2_prev.png")
-        # Add a rectangle to create ~3% change (must exceed 1% threshold)
         curr_path = make_image_with_rect(
             bg_color=128, rect_color=255,
-            rect=(100, 100, 500, 350),  # 400x250 on 1920x1080 ≈ 4.8%
+            rect=(100, 100, 500, 350),
             name="l2_curr.png",
         )
 
-        # Verify peek actually sees a minor change
         state = ContextState(
             last_screenshot_path=prev_path,
-            last_result_dict={"level": "L3", "data": "cached"},
-            last_perception_level="L3",
+            last_result_dict={"level": "L2", "data": "cached"},
+            last_perception_level="L2",
             last_perception_time=time.time(),
             cached_elements=_elements_to_dicts(_build_elements(5)),
             cached_resolution=(1920, 1080),
@@ -137,14 +128,11 @@ class TestSchedulerL2MinorChange:
         assert 0.0 < peek_result.diff_ratio < 0.15, f"Expected minor diff, got {peek_result.diff_ratio}"
         assert peek_result.suggest_level == "L2"
 
-        # Now test through the scheduler
         state.record_action("click", {"x": 300, "y": 250})
         state.save()
 
         mock_take_screenshot.set_next(curr_path)
 
-        # mock_crop_and_parse is active; glance still imports merge_elements + ScreenParser
-        # at runtime — patch them at their source modules
         with patch("xclaw.core.context.glance.run_pipeline") as mock_rp, \
              patch("xclaw.core.perception.merger.merge_elements", side_effect=lambda x: x), \
              patch("xclaw.core.perception.omniparser.ScreenParser"):
@@ -159,13 +147,13 @@ class TestSchedulerL2MinorChange:
         self, state_dir, mock_take_screenshot, mock_crop_and_parse,
         screenshot_pair, tmp_path,
     ):
-        """Real consecutive screenshots — accept L2 or L3 depending on actual diff."""
+        """Real consecutive screenshots — accept L2 depending on actual diff."""
         path_a, path_b = screenshot_pair
 
         state = ContextState(
             last_screenshot_path=path_a,
-            last_result_dict={"level": "L3", "data": "cached"},
-            last_perception_level="L3",
+            last_result_dict={"level": "L2", "data": "cached"},
+            last_perception_level="L2",
             last_perception_time=time.time(),
             cached_elements=_elements_to_dicts(_build_elements(5)),
             cached_resolution=(1920, 1080),
@@ -175,31 +163,30 @@ class TestSchedulerL2MinorChange:
 
         peek_result = peek(state, path_b)
 
-        # Just assert peek returns a valid result with real cv2 ops
         assert isinstance(peek_result, PeekResult)
         assert 0.0 <= peek_result.diff_ratio <= 1.0
         assert peek_result.suggest_level in ("L1", "L2", "L3")
 
 
 # ---------------------------------------------------------------------------
-# TestSchedulerL3MajorChange
+# TestSchedulerL2MajorChange
 # ---------------------------------------------------------------------------
 
-class TestSchedulerL3MajorChange:
-    """L3 path: large diff → full pipeline (mocked)."""
+class TestSchedulerL2MajorChange:
+    """L2 path: large diff → full pipeline (mocked)."""
 
-    def test_l3_synthetic_major_diff(
+    def test_l2_synthetic_major_diff(
         self, state_dir, mock_take_screenshot, mock_run_pipeline,
         make_gray_image, tmp_path,
     ):
-        """White vs black image → diff_ratio ≈ 1.0 → L3."""
+        """White vs black image → diff_ratio ≈ 1.0 → L2."""
         white = make_gray_image(255, name="white.png")
         black = make_gray_image(0, name="black.png")
 
         state = ContextState(
             last_screenshot_path=white,
-            last_result_dict={"level": "L3", "data": "old"},
-            last_perception_level="L3",
+            last_result_dict={"level": "L2", "data": "old"},
+            last_perception_level="L2",
             last_perception_time=time.time(),
             cached_elements=_elements_to_dicts(_build_elements(5)),
             cached_resolution=(1920, 1080),
@@ -213,21 +200,21 @@ class TestSchedulerL3MajorChange:
 
         result = schedule({"status": "ok", "action": "click", "x": 500, "y": 500})
 
-        assert result.level == "L3"
-        assert "L3" in result.escalation_path
+        assert result.level == "L2"
+        assert "L2" in result.escalation_path
 
-    def test_l3_real_non_consecutive(
+    def test_l2_real_non_consecutive(
         self, state_dir, mock_take_screenshot, mock_run_pipeline,
         screenshot_paths, tmp_path,
     ):
-        """First vs last screenshot — typically large diff → L3."""
+        """First vs last screenshot — typically large diff → L2."""
         first = str(screenshot_paths[0])
         last = str(screenshot_paths[-1])
 
         state = ContextState(
             last_screenshot_path=first,
-            last_result_dict={"level": "L3", "data": "old"},
-            last_perception_level="L3",
+            last_result_dict={"level": "L2", "data": "old"},
+            last_perception_level="L2",
             last_perception_time=time.time(),
             cached_elements=_elements_to_dicts(_build_elements(5)),
             cached_resolution=(1920, 1080),
@@ -241,29 +228,28 @@ class TestSchedulerL3MajorChange:
 
         result = schedule({"status": "ok", "action": "click", "x": 100, "y": 100})
 
-        # With distant screenshots, expect L2 or L3 (depending on actual diff)
-        assert result.level in ("L2", "L3")
+        assert result.level == "L2"
 
 
 # ---------------------------------------------------------------------------
-# TestSchedulerForcedL3Paths
+# TestSchedulerForcedL2Paths
 # ---------------------------------------------------------------------------
 
-class TestSchedulerForcedL3Paths:
-    """Conditions that force L3 regardless of diff."""
+class TestSchedulerForcedL2Paths:
+    """Conditions that force L2 regardless of diff."""
 
     def test_stale_cache(
         self, state_dir, mock_take_screenshot, mock_run_pipeline,
         make_gray_image,
     ):
-        """last_perception_time 20s ago → stale → force L3."""
+        """last_perception_time 20s ago → stale → force L2."""
         img = make_gray_image(128, name="stale.png")
 
         state = ContextState(
             last_screenshot_path=img,
-            last_result_dict={"level": "L3"},
-            last_perception_level="L3",
-            last_perception_time=time.time() - 20.0,  # 20s ago, TTL is 15s
+            last_result_dict={"level": "L2"},
+            last_perception_level="L2",
+            last_perception_time=time.time() - 20.0,
             cached_elements=_elements_to_dicts(_build_elements(3)),
             cached_resolution=(1920, 1080),
             confidence=1.0,
@@ -275,19 +261,19 @@ class TestSchedulerForcedL3Paths:
         mock_take_screenshot.set_next(img)
 
         result = schedule({"status": "ok", "action": "type", "text": "x"})
-        assert result.level == "L3"
+        assert result.level == "L2"
 
     def test_critical_action(
         self, state_dir, mock_take_screenshot, mock_run_pipeline,
         make_gray_image,
     ):
-        """press:enter → critical action → force L3."""
+        """press:enter → critical action → force L2."""
         img = make_gray_image(128, name="critical.png")
 
         state = ContextState(
             last_screenshot_path=img,
-            last_result_dict={"level": "L3"},
-            last_perception_level="L3",
+            last_result_dict={"level": "L2"},
+            last_perception_level="L2",
             last_perception_time=time.time(),
             cached_elements=_elements_to_dicts(_build_elements(3)),
             cached_resolution=(1920, 1080),
@@ -300,24 +286,24 @@ class TestSchedulerForcedL3Paths:
         mock_take_screenshot.set_next(img)
 
         result = schedule({"status": "ok", "action": "press", "key": "enter"})
-        assert result.level == "L3"
+        assert result.level == "L2"
 
     def test_consecutive_cheap_limit(
         self, state_dir, mock_take_screenshot, mock_run_pipeline,
         make_gray_image,
     ):
-        """consecutive_cheap_count=4 → force L3."""
+        """consecutive_cheap_count=4 → force L2."""
         img = make_gray_image(128, name="cheap.png")
 
         state = ContextState(
             last_screenshot_path=img,
-            last_result_dict={"level": "L3"},
+            last_result_dict={"level": "L2"},
             last_perception_level="L0",
             last_perception_time=time.time(),
             cached_elements=_elements_to_dicts(_build_elements(3)),
             cached_resolution=(1920, 1080),
             confidence=1.0,
-            consecutive_cheap_count=4,  # at the limit
+            consecutive_cheap_count=4,
         )
         state.record_action("type", {"text": "y"})
         state.save()
@@ -325,7 +311,7 @@ class TestSchedulerForcedL3Paths:
         mock_take_screenshot.set_next(img)
 
         result = schedule({"status": "ok", "action": "type", "text": "y"})
-        assert result.level == "L3"
+        assert result.level == "L2"
 
 
 # ---------------------------------------------------------------------------
@@ -341,25 +327,24 @@ class TestStatePersistenceAcrossCalls:
     ):
         """Simulate 6 CLI calls sharing disk state.
 
-        1. No state → L3
+        1. No state → L2
         2. type → L0 (cheap +1)
         3. type → L0 (cheap +2)
-        4. click → L1 (cheap +3)  # click decays to 0.75 → L1, same image → no change → L1
-        5. type → L0 (cheap +4)  # after L1, confidence was set; type keeps it above 0.8
-        6. type → L3 (consecutive_cheap=4, hit limit)
+        4. click → L1 (cheap +3)
+        5. type → L0 or L1 (cheap +4)
+        6. type → L2 (consecutive_cheap=4, hit limit)
         """
         img = make_gray_image(128, name="seq.png")
 
-        # Call 1: no state file → L3
+        # Call 1: no state file → L2
         mock_take_screenshot.set_next(img)
         r1 = schedule({"status": "ok", "action": "type", "text": "a"})
-        assert r1.level == "L3"
+        assert r1.level == "L2"
 
-        # Verify state persisted
         s1 = ContextState.load()
         assert s1 is not None
         assert s1.confidence == 1.0
-        assert s1.consecutive_cheap_count == 0  # L3 resets
+        assert s1.consecutive_cheap_count == 0
 
         # Call 2: type (decay=0.95) → 1.0*0.95=0.95 → L0
         mock_take_screenshot.set_next(img)
@@ -376,37 +361,33 @@ class TestStatePersistenceAcrossCalls:
         assert s3.consecutive_cheap_count == 2
 
         # Call 4: click (decay=0.75) → confidence drops below 0.8 → L1
-        # Same image → peek shows no change → L1
         mock_take_screenshot.set_next(img)
         r4 = schedule({"status": "ok", "action": "click", "x": 10, "y": 10})
         assert r4.level == "L1"
         s4 = ContextState.load()
         assert s4.consecutive_cheap_count == 3
 
-        # Call 5: type after L1 → confidence was set around 0.5+; type decays by 0.95
-        # Predict depends on stored confidence; after L1 it's max(pred, 0.5) ≈ ~0.5-0.7
-        # type decay 0.95 → stays above 0.5 but may be L0 or L1
+        # Call 5: type after L1
         mock_take_screenshot.set_next(img)
         r5 = schedule({"status": "ok", "action": "type", "text": "d"})
-        # Accept L0 or L1 — both are "cheap"
         assert r5.level in ("L0", "L1")
         s5 = ContextState.load()
         assert s5.consecutive_cheap_count == 4
 
-        # Call 6: consecutive_cheap=4 → force L3
+        # Call 6: consecutive_cheap=4 → force L2
         mock_take_screenshot.set_next(img)
         r6 = schedule({"status": "ok", "action": "type", "text": "e"})
-        assert r6.level == "L3"
+        assert r6.level == "L2"
         s6 = ContextState.load()
-        assert s6.consecutive_cheap_count == 0  # reset after L3
+        assert s6.consecutive_cheap_count == 0
 
     def test_state_round_trip(self, state_dir):
         """Save → load → compare all fields."""
         elements = _elements_to_dicts(_build_elements(5))
         original = ContextState(
             last_screenshot_path="/tmp/test.png",
-            last_result_dict={"level": "L3", "data": [1, 2, 3]},
-            last_perception_level="L3",
+            last_result_dict={"level": "L2", "data": [1, 2, 3]},
+            last_perception_level="L2",
             last_perception_time=1700000000.0,
             cached_elements=elements,
             cached_resolution=(1920, 1080),
@@ -449,8 +430,8 @@ class TestTimingReasonableness:
 
         state = ContextState(
             last_screenshot_path=img,
-            last_result_dict={"level": "L3", "data": "ok"},
-            last_perception_level="L3",
+            last_result_dict={"level": "L2", "data": "ok"},
+            last_perception_level="L2",
             last_perception_time=time.time(),
             cached_elements=_elements_to_dicts(_build_elements(3)),
             cached_resolution=(1920, 1080),
@@ -494,7 +475,6 @@ class TestTimingReasonableness:
         """Scheduler should always report non-negative elapsed_ms."""
         img = make_gray_image(128, name="timing_nz.png")
 
-        # No state → force L3
         mock_take_screenshot.set_next(img)
         result = schedule({"status": "ok", "action": "click", "x": 0, "y": 0})
 
@@ -522,7 +502,6 @@ class TestGPU:
         assert result.resolution[1] > 0
         assert "l1_ms" in result.timing
         assert "l2_ms" in result.timing
-        assert "l3_ms" in result.timing
 
     def test_glance_real_parser(self, state_dir, screenshot_pair):
         """Real peek + real glance without any mocks."""
@@ -530,12 +509,11 @@ class TestGPU:
 
         from xclaw.core.pipeline import run_pipeline
 
-        # First: run full pipeline on image A to populate state
         full_result = run_pipeline(path_a)
         state = ContextState(
             last_screenshot_path=path_a,
             last_result_dict=full_result.to_dict(),
-            last_perception_level="L3",
+            last_perception_level="L2",
             last_perception_time=time.time(),
             cached_elements=_elements_to_dicts(full_result.elements),
             cached_resolution=full_result.resolution,
@@ -543,11 +521,9 @@ class TestGPU:
             consecutive_cheap_count=0,
         )
 
-        # Peek
         peek_result = peek(state, path_b)
         assert isinstance(peek_result, PeekResult)
 
-        # If there are change regions and it's a minor diff, test glance
         if peek_result.suggest_level == "L2" and peek_result.change_regions:
             from xclaw.core.context.glance import glance
             glance_result = glance(path_b, peek_result.change_regions, state)

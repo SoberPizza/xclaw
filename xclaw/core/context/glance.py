@@ -140,45 +140,24 @@ def _crop_and_parse(
     return global_elements
 
 
-def _run_l2_l3(
+def _run_l2(
     elements: list[RawElement],
     resolution: tuple[int, int],
     image_path: str,
 ) -> PipelineResult:
-    """Run L2 spatial + L3 semantic on a set of elements (CPU only)."""
-    from xclaw.core.spatial.row_detector import detect_rows
-    from xclaw.core.spatial.block_segmenter import segment_blocks
+    """Run L2 column detection + reading order on a set of elements (CPU only)."""
     from xclaw.core.spatial.column_detector import detect_columns
-    from xclaw.core.spatial.region_classifier import classify_regions
-    from xclaw.core.spatial.pattern_detector import detect_patterns
-    from xclaw.core.semantic.universal import detect_components
-    from xclaw.core.semantic.context import infer_context
+    from xclaw.core.spatial.reading_order import sort_reading_order
 
-    rows = detect_rows(elements)
-    blocks = segment_blocks(rows, resolution)
     columns = detect_columns(elements, resolution=resolution)
-    regions = classify_regions(blocks, columns, resolution)
-    patterns = detect_patterns(blocks, rows, elements)
-
-    for region in regions:
-        for bid in region.block_ids:
-            if bid in patterns:
-                region.pattern = patterns[bid]
-
-    components = detect_components(elements, blocks, rows, regions, resolution)
-    context = infer_context(elements, regions, components, resolution)
+    reading_order = sort_reading_order(elements, columns)
 
     return PipelineResult(
         elements=elements,
         resolution=resolution,
         image_path=image_path,
-        rows=rows,
-        blocks=blocks,
         columns=columns,
-        regions=regions,
-        patterns=patterns,
-        components=components,
-        context=context,
+        reading_order=reading_order,
         timing={},
     )
 
@@ -190,7 +169,7 @@ def glance(
 ) -> GlanceResult:
     """Incremental parse: only re-parse changed regions, merge with cache.
 
-    If total change area > 60% of screen, falls back to full L3 pipeline.
+    If total change area > 60% of screen, falls back to full pipeline.
     If last action was scroll, uses ORB feature matching for smarter region detection.
 
     Args:
@@ -235,7 +214,7 @@ def glance(
             from xclaw.core.perception.merger import merge_elements
             merged = merge_elements(renumbered)
 
-            pipeline_result = _run_l2_l3(merged, resolution, screenshot_path)
+            pipeline_result = _run_l2(merged, resolution, screenshot_path)
             elapsed = (time.perf_counter_ns() - t0) // 1_000_000
             pipeline_result.timing["glance_ms"] = elapsed
             pipeline_result.timing["scroll_offset"] = scroll_result.offset_y
@@ -247,7 +226,7 @@ def glance(
                 elapsed_ms=elapsed,
             )
 
-    # Check if change area is too large → fall back to L3
+    # Check if change area is too large → fall back to full pipeline
     screen_area = resolution[0] * resolution[1]
     change_area = sum(
         (r[2] - r[0]) * (r[3] - r[1]) for r in change_regions
@@ -296,7 +275,7 @@ def glance(
     from xclaw.core.perception.merger import merge_elements
     merged = merge_elements(renumbered)
 
-    pipeline_result = _run_l2_l3(merged, resolution, screenshot_path)
+    pipeline_result = _run_l2(merged, resolution, screenshot_path)
 
     elapsed = (time.perf_counter_ns() - t0) // 1_000_000
     pipeline_result.timing["glance_ms"] = elapsed
