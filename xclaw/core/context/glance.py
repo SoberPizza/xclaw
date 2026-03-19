@@ -120,9 +120,8 @@ def _crop_and_parse(
         from PIL import Image
         import numpy as np
         crop_img = np.array(Image.open(crop_path))
-        parser._ensure_models()
-        icon_boxes = parser._detector.detect(crop_img)
-        text_boxes = parser._ocr.detect(crop_img)
+        icon_boxes = parser.detect_icons(crop_img)
+        text_boxes = parser.detect_text(crop_img)
         from xclaw.core.perception.merger import fuse_results
         fused, _ = fuse_results(icon_boxes, text_boxes)
         raw_elements = []

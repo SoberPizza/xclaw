@@ -1,30 +1,25 @@
 """Perception engine — platform-adaptive orchestrator.
 
-Windows:  YOLO(CUDA) + PaddleOCR(GPU) + Florence-2(CUDA FP16)
-macOS:    YOLO(MPS)  + PaddleOCR(CPU) + Florence-2(CPU FP32)
+Delegates to a :class:`PerceptionBackend` (default: ``PipelineBackend``
+which uses YOLO + PaddleOCR + MiniCPM-V 2.0).
 """
 
-import sys
-import time
 import base64
 import io
-from pathlib import Path
 from typing import Optional
 
 import numpy as np
-import torch
 
-from xclaw.config import PERCEPTION_CONFIG, MODELS_DIR, WEIGHTS_DIR
-from xclaw.core.perception.ocr import OCREngine
-from xclaw.core.perception.omniparser import OmniDetector, OmniCaption
+from xclaw.config import PERCEPTION_CONFIG
+from xclaw.core.perception.backend import PerceptionBackend
 from xclaw.core.perception.merger import fuse_results
+from xclaw.core.perception.types import TextBox
 
 
 class PerceptionEngine:
     """Perception engine — platform-adaptive.
 
-    Windows:  YOLO(CUDA) + PaddleOCR(GPU) + Florence-2(CUDA FP16)
-    macOS:    YOLO(MPS)  + PaddleOCR(CPU) + Florence-2(CPU FP32)
+    All model interaction is delegated to a :class:`PerceptionBackend`.
     """
 
     _instance: Optional["PerceptionEngine"] = None
@@ -35,65 +30,40 @@ class PerceptionEngine:
             cls._instance = cls()
         return cls._instance
 
-    def __init__(self):
+    def __init__(self, backend: Optional[PerceptionBackend] = None):
         self.config = PERCEPTION_CONFIG
-        self._models_loaded = False
-        self._detector: Optional[OmniDetector] = None
-        self._caption: Optional[OmniCaption] = None
-        self._ocr: Optional[OCREngine] = None
+        if backend is not None:
+            self._backend = backend
+        else:
+            from xclaw.core.perception.pipeline_backend import PipelineBackend
+            self._backend = PipelineBackend(self.config)
+
+    # ── backward-compat shim ──
 
     def _ensure_models(self):
-        """Lazy-load all models."""
-        if self._models_loaded:
-            return
+        """Lazy-load all models (delegates to backend)."""
+        self._backend.load_models()
 
-        t0 = time.time()
-        model_dir = self._find_model_dir()
+    # ── public API (delegates to backend) ──
 
-        # 1. YOLO icon_detect
-        onnx_path = model_dir / "icon_detect" / "model.onnx"
-        pt_path = model_dir / "icon_detect" / "model.pt"
+    def detect_icons(self, image: np.ndarray, conf: float = 0.3) -> list[dict]:
+        return self._backend.detect_icons(image, conf)
 
-        if onnx_path.exists():
-            self._detector = OmniDetector.from_onnx(
-                str(onnx_path),
-                provider=self.config.yolo_onnx_ep,
-            )
-        elif pt_path.exists():
-            self._detector = OmniDetector.from_ultralytics(
-                str(pt_path),
-                device=self.config.yolo_device,
-            )
-        else:
-            raise FileNotFoundError(
-                f"No YOLO model found at {model_dir / 'icon_detect'}. "
-                "Run: uv run python scripts/download_models.py"
-            )
+    def detect_text(self, image: np.ndarray, min_confidence: float = 0.6) -> list[TextBox]:
+        return self._backend.detect_text(image, min_confidence)
 
-        # 2. PaddleOCR
-        self._ocr = OCREngine(
-            use_gpu=self.config.ocr_use_gpu,
-            det_limit=self.config.ocr_det_limit,
-        )
+    def caption_icons(self, image: np.ndarray, icon_elements: list[dict]) -> list[str]:
+        return self._backend.caption_icons(image, icon_elements)
 
-        # 3. Florence-2 (conditional)
-        if self.config.florence2_enabled:
-            florence_dir = model_dir / "icon_caption_florence"
-            if florence_dir.exists():
-                dtype = (
-                    torch.float16
-                    if self.config.florence2_dtype == "float16"
-                    else torch.float32
-                )
-                self._caption = OmniCaption(
-                    model_dir=florence_dir,
-                    device=self.config.florence2_device,
-                    dtype=dtype,
-                )
+    @property
+    def caption_enabled(self) -> bool:
+        return self._backend.caption_enabled
 
-        self._models_loaded = True
-        elapsed = time.time() - t0
-        print(f"[engine] Models loaded in {elapsed:.1f}s\n{self.config.describe()}")
+    @property
+    def caption_conditional(self) -> bool:
+        return self._backend.caption_conditional
+
+    # ── perception pipeline ──
 
     def full_look(
         self,
@@ -106,10 +76,12 @@ class PerceptionEngine:
         2. YOLO detect interactive regions
         3. PaddleOCR extract Chinese/English text
         4. Spatial fusion + dedup
-        5. Conditional Florence-2 for text-less icons
+        5. Conditional caption for text-less icons
         6. Assign global IDs
         """
-        self._ensure_models()
+        import time
+
+        self._backend.load_models()
 
         t_start = time.time()
 
@@ -117,25 +89,24 @@ class PerceptionEngine:
         screenshot = self._capture(region=region)
         t_capture = time.time()
 
-        # Step 2: YOLO detection
-        icon_boxes = self._detector.detect(screenshot)
+        # Step 2: Icon detection
+        icon_boxes = self._backend.detect_icons(screenshot)
         t_yolo = time.time()
 
-        # Step 3: PaddleOCR
-        text_boxes = self._ocr.detect(screenshot)
+        # Step 3: OCR
+        text_boxes = self._backend.detect_text(screenshot)
         t_ocr = time.time()
 
         # Step 4: Spatial fusion
         merged, icons_needing_caption = fuse_results(icon_boxes, text_boxes)
         t_merge = time.time()
 
-        # Step 5: Conditional Florence-2 caption
+        # Step 5: Conditional caption
         if (
-            self.config.florence2_enabled
-            and self._caption is not None
+            self._backend.caption_enabled
             and icons_needing_caption
         ):
-            captions = self._caption.batch_caption(screenshot, icons_needing_caption)
+            captions = self._backend.caption_icons(screenshot, icons_needing_caption)
             for elem, cap in zip(icons_needing_caption, captions):
                 elem["content"] = cap
         t_caption = time.time()
@@ -199,18 +170,3 @@ class PerceptionEngine:
         buf = io.BytesIO()
         pil_img.save(buf, format="PNG")
         return base64.b64encode(buf.getvalue()).decode()
-
-    @staticmethod
-    def _find_model_dir() -> Path:
-        candidates = [
-            MODELS_DIR,                                      # models/ (new)
-            WEIGHTS_DIR,                                     # weights/ (legacy)
-            Path(__file__).parents[2] / "models",            # relative
-            Path.home() / ".xclaw" / "models",               # user install
-        ]
-        for p in candidates:
-            if (p / "icon_detect").exists():
-                return p
-        raise FileNotFoundError(
-            "Model directory not found. Run: uv run python scripts/download_models.py"
-        )

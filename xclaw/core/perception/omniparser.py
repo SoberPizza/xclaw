@@ -1,7 +1,6 @@
-"""OmniParser components — YOLO detector + Florence-2 caption, dual backend."""
+"""OmniParser components — YOLO detector, dual backend."""
 
 import numpy as np
-import torch
 from pathlib import Path
 
 
@@ -121,74 +120,3 @@ class OmniDetector:
             if all(_iou(det["bbox"], k["bbox"]) < 0.5 for k in keep):
                 keep.append(det)
         return keep
-
-
-class OmniCaption:
-    """Florence-2-base icon caption.
-
-    Windows: CUDA FP16  (~200ms/batch)
-    macOS:   CPU FP32   (~2-3s/batch) — MPS has gather bug, unusable
-    """
-
-    def __init__(self, model_dir: Path, device: str = "cpu", dtype=torch.float32):
-        from transformers import AutoProcessor, AutoModelForCausalLM
-
-        self.device = device
-        self.dtype = dtype
-
-        self.processor = AutoProcessor.from_pretrained(
-            str(model_dir), trust_remote_code=True
-        )
-        self.model = AutoModelForCausalLM.from_pretrained(
-            str(model_dir),
-            torch_dtype=dtype,
-            trust_remote_code=True,
-        ).to(device).eval()
-
-    @torch.inference_mode()
-    def batch_caption(
-        self, screenshot: np.ndarray, icon_elements: list[dict]
-    ) -> list[str]:
-        """Generate semantic descriptions for icon regions.
-
-        Args:
-            screenshot: Full screenshot as numpy array.
-            icon_elements: Elements needing caption (must have 'bbox' key).
-
-        Returns:
-            List of text descriptions, one per element.
-        """
-        from PIL import Image
-
-        captions = []
-        pil_img = Image.fromarray(screenshot)
-
-        for elem in icon_elements:
-            x1, y1, x2, y2 = elem["bbox"]
-            crop = pil_img.crop((
-                max(0, x1 - 5), max(0, y1 - 5),
-                min(pil_img.width, x2 + 5), min(pil_img.height, y2 + 5),
-            ))
-
-            prompt = "<CAPTION>"
-            inputs = self.processor(text=prompt, images=crop, return_tensors="pt")
-            inputs = {k: v.to(self.device) for k, v in inputs.items()}
-
-            if self.dtype == torch.float16:
-                inputs = {
-                    k: v.half() if v.dtype == torch.float32 else v
-                    for k, v in inputs.items()
-                }
-
-            generated_ids = self.model.generate(
-                **inputs,
-                max_new_tokens=30,
-                num_beams=1,
-                do_sample=False,
-            )
-            text = self.processor.batch_decode(
-                generated_ids, skip_special_tokens=True
-            )[0]
-            captions.append(text.strip())
-
-        return captions

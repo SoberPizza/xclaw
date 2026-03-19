@@ -18,10 +18,9 @@ OMNIPARSER_FILES = [
     "icon_detect/model.pt",
     "icon_detect/model.yaml",
     "icon_detect/train_args.yaml",
-    "icon_caption/config.json",
-    "icon_caption/generation_config.json",
-    "icon_caption/model.safetensors",
 ]
+
+MINICPM_REPO = "openbmb/MiniCPM-V-2"
 
 
 class DownloadGUI:
@@ -66,7 +65,7 @@ class DownloadGUI:
 
     def _download_thread(self):
         try:
-            total_steps = len(OMNIPARSER_FILES) + 2  # +1 PaddleOCR, +1 init
+            total_steps = len(OMNIPARSER_FILES) + 3  # +1 MiniCPM-V, +1 PaddleOCR, +1 init
             step = 0
 
             self._ui(status="下载 OmniParser V2 …")
@@ -88,11 +87,22 @@ class DownloadGUI:
                     capture_output=True,
                 )
 
-            # Rename icon_caption → icon_caption_florence
-            src = self.model_dir / "icon_caption"
-            dst = self.model_dir / "icon_caption_florence"
-            if src.exists() and not dst.exists():
-                src.rename(dst)
+            # Download MiniCPM-V 2.0
+            step += 1
+            self._ui(
+                status="下载 MiniCPM-V 2.0 …",
+                file="icon caption model",
+                progress=step / total_steps * 100,
+            )
+            minicpm_dir = self.model_dir / "icon_caption_minicpm"
+            subprocess.run(
+                [
+                    sys.executable, "-m", "huggingface_hub", "download",
+                    MINICPM_REPO, "--local-dir", str(minicpm_dir),
+                ],
+                check=True,
+                capture_output=True,
+            )
 
             # PaddleOCR
             step += 1

@@ -38,8 +38,8 @@ WEIGHTS_DIR = PROJECT_ROOT / "weights"
 OMNIPARSER_DIR = PROJECT_ROOT / "OmniParser"
 OMNIPARSER_CONFIG = {
     "som_model_path": str(WEIGHTS_DIR / "icon_detect" / "model.pt"),
-    "caption_model_name": "florence2",
-    "caption_model_path": str(WEIGHTS_DIR / "icon_caption_florence"),
+    "caption_model_name": "minicpm_v",
+    "caption_model_path": str(WEIGHTS_DIR / "icon_caption_minicpm"),
     "BOX_TRESHOLD": 0.05,
 }
 

@@ -124,22 +124,20 @@ def run_pipeline(
     screenshot = np.array(img)
 
     # Run detection + OCR + fusion
-    engine._ensure_models()
-
-    icon_boxes = engine._detector.detect(screenshot)
-    text_boxes = engine._ocr.detect(screenshot)
+    icon_boxes = engine.detect_icons(screenshot)
+    text_boxes = engine.detect_text(screenshot)
 
     from xclaw.core.perception.merger import fuse_results, merge_elements
 
     fused, icons_needing_caption = fuse_results(icon_boxes, text_boxes)
 
-    # Conditional Florence-2
+    # Conditional caption
     if (
-        engine.config.florence2_enabled
-        and engine._caption is not None
+        engine.caption_enabled
+        and engine.caption_conditional
         and icons_needing_caption
     ):
-        captions = engine._caption.batch_caption(screenshot, icons_needing_caption)
+        captions = engine.caption_icons(screenshot, icons_needing_caption)
         for elem, cap in zip(icons_needing_caption, captions):
             elem["content"] = cap
 

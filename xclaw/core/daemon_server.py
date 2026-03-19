@@ -12,6 +12,8 @@ import threading
 import platform
 from pathlib import Path
 
+from xclaw.core.backend_registry import BackendRegistry
+
 _system = platform.system()
 PID_FILE = Path.home() / ".xclaw" / "daemon.pid"
 IDLE_TIMEOUT = 300
@@ -20,19 +22,27 @@ IDLE_TIMEOUT = 300
 class DaemonServer:
     def __init__(self):
         self.last_activity = time.time()
+        self.registry = BackendRegistry()
         self.engine = None
 
-    def _load_engine(self):
-        if self.engine is None:
-            # Add project root to path for imports
-            project_root = os.environ.get("XCLAW_HOME") or str(Path(__file__).parents[2])
-            if project_root not in sys.path:
-                sys.path.insert(0, project_root)
+    def _ensure_engine(self):
+        if self.engine is not None:
+            return
 
-            from xclaw.core.perception.engine import PerceptionEngine
-            self.engine = PerceptionEngine.get_instance()
-            self.engine._ensure_models()
-            print("[daemon] Models loaded. Ready.", flush=True)
+        project_root = os.environ.get("XCLAW_HOME") or str(Path(__file__).parents[2])
+        if project_root not in sys.path:
+            sys.path.insert(0, project_root)
+
+        from xclaw.core.perception.pipeline_backend import PipelineBackend
+        from xclaw.core.perception.engine import PerceptionEngine
+
+        backend = PipelineBackend()
+        self.registry.register("pipeline", backend)
+        self.registry.switch("pipeline")
+
+        self.engine = PerceptionEngine.get_instance()
+        self.engine._ensure_models()
+        print("[daemon] Models loaded. Ready.", flush=True)
 
     def handle(self, request: dict) -> dict:
         self.last_activity = time.time()
@@ -44,14 +54,38 @@ class DaemonServer:
             PID_FILE.unlink(missing_ok=True)
             os._exit(0)
         elif cmd == "look":
-            self._load_engine()
-            return self.engine.full_look(
-                region=request.get("region"),
-                with_image=request.get("with_image", False),
-            )
+            self._ensure_engine()
+            t0 = time.monotonic()
+            try:
+                result = self.engine.full_look(
+                    region=request.get("region"),
+                    with_image=request.get("with_image", False),
+                )
+                elapsed_ms = (time.monotonic() - t0) * 1000
+                self.registry.active_entry.record_call(elapsed_ms)
+                return result
+            except Exception as e:
+                self.registry.active_entry.record_error()
+                raise
         elif cmd == "screenshot":
-            self._load_engine()
+            self._ensure_engine()
             return self.engine.screenshot_only(region=request.get("region"))
+        elif cmd == "list-backends":
+            return self.registry.list_backends()
+        elif cmd == "switch-backend":
+            name = request.get("name")
+            if not name:
+                return {"status": "error", "message": "Missing 'name' parameter"}
+            try:
+                result = self.registry.switch(name)
+                # Update engine backend reference
+                if self.engine is not None:
+                    self.engine._backend = self.registry.active
+                return result
+            except KeyError as e:
+                return {"status": "error", "message": str(e)}
+        elif cmd == "backend-status":
+            return self.registry.backend_status(request.get("name"))
         else:
             return {"status": "error", "message": f"Unknown command: {cmd}"}
 
@@ -134,7 +168,7 @@ class DaemonServer:
                 try:
                     win32file.WriteFile(
                         pipe,
-                        json.dumps({"error": str(e)}).encode("utf-8"),
+                        json.dumps({"status": "error", "message": str(e)}).encode("utf-8"),
                     )
                 except Exception:
                     pass

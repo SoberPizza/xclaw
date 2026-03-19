@@ -25,10 +25,11 @@ IDLE_TIMEOUT = 300  # 5 minutes auto-shutdown
 
 
 def is_daemon_alive() -> bool:
-    if not PID_FILE.exists():
+    try:
+        pid = int(PID_FILE.read_text().strip())
+    except (FileNotFoundError, ValueError):
+        PID_FILE.unlink(missing_ok=True)
         return False
-
-    pid = int(PID_FILE.read_text().strip())
 
     if _system == "Darwin":
         try:
@@ -61,13 +62,15 @@ def ensure_daemon():
     env.setdefault("XCLAW_DATA", str(DATA_DIR))
 
     if _system == "Darwin":
+        log_file = open("/tmp/xclaw_daemon.log", "w")
         subprocess.Popen(
             [sys.executable, daemon_script],
             env=env,
-            stdout=open("/tmp/xclaw_daemon.log", "w"),
+            stdout=log_file,
             stderr=subprocess.STDOUT,
             start_new_session=True,
         )
+        log_file.close()
     elif _system == "Windows":
         subprocess.Popen(
             [sys.executable, daemon_script],
@@ -101,21 +104,21 @@ def _request_unix_socket(command: dict) -> dict:
 
     s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     s.connect(SOCK_PATH)
-    s.settimeout(120)  # Florence-2 CPU may take seconds
+    s.settimeout(120)  # MiniCPM-V CPU may take seconds
+    try:
+        payload = json.dumps(command).encode("utf-8")
+        # Length-prefixed protocol: 4-byte big-endian length + data
+        s.sendall(len(payload).to_bytes(4, "big") + payload)
 
-    payload = json.dumps(command).encode("utf-8")
-    # Length-prefixed protocol: 4-byte big-endian length + data
-    s.sendall(len(payload).to_bytes(4, "big") + payload)
+        # Receive length prefix
+        length_bytes = _recv_exact(s, 4)
+        length = int.from_bytes(length_bytes, "big")
 
-    # Receive length prefix
-    length_bytes = _recv_exact(s, 4)
-    length = int.from_bytes(length_bytes, "big")
-
-    # Receive data
-    data = _recv_exact(s, length)
-    s.close()
-
-    return json.loads(data.decode("utf-8"))
+        # Receive data
+        data = _recv_exact(s, length)
+        return json.loads(data.decode("utf-8"))
+    finally:
+        s.close()
 
 
 def _recv_exact(sock, n: int) -> bytes:
@@ -143,3 +146,23 @@ def _request_named_pipe(command: dict) -> dict:
         return json.loads(resp.decode("utf-8"))
     finally:
         win32file.CloseHandle(handle)
+
+
+# -- Backend registry convenience functions --------------------------------
+
+def list_backends() -> dict:
+    """List registered perception backends and their stats."""
+    return request_perception({"command": "list-backends"})
+
+
+def switch_backend(name: str) -> dict:
+    """Switch the active perception backend by name."""
+    return request_perception({"command": "switch-backend", "name": name})
+
+
+def backend_status(name: str | None = None) -> dict:
+    """Get status/stats for a specific backend (or the active one)."""
+    cmd: dict = {"command": "backend-status"}
+    if name is not None:
+        cmd["name"] = name
+    return request_perception(cmd)

@@ -9,28 +9,138 @@ import pytest
 
 
 # ---------------------------------------------------------------------------
-# Platform router (__init__.py)
+# ActionBackend protocol conformance
 # ---------------------------------------------------------------------------
 
 
-class TestPlatformRouter:
-    def test_exports_all_symbols(self):
-        """Verify __init__.py exports the required symbols."""
-        from xclaw.action import __all__
+class TestActionBackendProtocol:
+    def test_dry_run_satisfies_protocol(self):
+        from xclaw.action.backend import ActionBackend
+        from xclaw.action.dry_run_backend import DryRunBackend
 
-        expected = {"click", "double_click", "scroll", "move_to", "type_text", "hotkey"}
-        assert set(__all__) == expected
+        backend = DryRunBackend()
+        assert isinstance(backend, ActionBackend)
 
-    def test_imports_resolve(self):
-        """All public names should be importable."""
-        from xclaw.action import click, double_click, scroll, move_to, type_text, hotkey
+    def test_dry_run_click_records(self):
+        from xclaw.action.dry_run_backend import DryRunBackend
 
-        assert callable(click)
-        assert callable(double_click)
-        assert callable(scroll)
-        assert callable(move_to)
-        assert callable(type_text)
-        assert callable(hotkey)
+        b = DryRunBackend()
+        result = b.click(100, 200)
+        assert result["status"] == "ok"
+        assert result["action"] == "click"
+        assert result["x"] == 100
+        assert result["y"] == 200
+        assert len(b.log) == 1
+
+    def test_dry_run_double_click_records(self):
+        from xclaw.action.dry_run_backend import DryRunBackend
+
+        b = DryRunBackend()
+        result = b.double_click(300, 400)
+        assert result["action"] == "double_click"
+        assert len(b.log) == 1
+
+    def test_dry_run_type_records(self):
+        from xclaw.action.dry_run_backend import DryRunBackend
+
+        b = DryRunBackend()
+        result = b.type_text("hello")
+        assert result["action"] == "type"
+        assert result["text"] == "hello"
+
+    def test_dry_run_press_records(self):
+        from xclaw.action.dry_run_backend import DryRunBackend
+
+        b = DryRunBackend()
+        result = b.press_key("enter")
+        assert result["action"] == "press"
+        assert result["key"] == "enter"
+
+    def test_dry_run_scroll_records(self):
+        from xclaw.action.dry_run_backend import DryRunBackend
+
+        b = DryRunBackend()
+        result = b.scroll("down", 3, 100, 200)
+        assert result["action"] == "scroll"
+        assert result["direction"] == "down"
+        assert result["amount"] == 3
+
+    def test_dry_run_screen_size(self):
+        from xclaw.action.dry_run_backend import DryRunBackend
+
+        b = DryRunBackend()
+        w, h = b.screen_size()
+        assert w == 1920
+        assert h == 1080
+
+    def test_dry_run_cursor_pos(self):
+        from xclaw.action.dry_run_backend import DryRunBackend
+
+        b = DryRunBackend()
+        x, y = b.cursor_pos()
+        assert x == 960
+        assert y == 540
+
+    def test_dry_run_move_to(self):
+        from xclaw.action.dry_run_backend import DryRunBackend
+
+        b = DryRunBackend()
+        b.move_to(50, 60)
+        assert b.log[-1]["action"] == "move_to"
+
+    def test_dry_run_hotkey(self):
+        from xclaw.action.dry_run_backend import DryRunBackend
+
+        b = DryRunBackend()
+        b.hotkey("cmd+c")
+        assert b.log[-1]["action"] == "hotkey"
+        assert b.log[-1]["combo"] == "cmd+c"
+
+
+# ---------------------------------------------------------------------------
+# set_backend / get_backend
+# ---------------------------------------------------------------------------
+
+
+class TestBackendSingleton:
+    def test_set_backend_and_use(self):
+        from xclaw.action import set_backend, get_backend
+        from xclaw.action.dry_run_backend import DryRunBackend
+
+        dry = DryRunBackend()
+        set_backend(dry)
+        try:
+            result = get_backend().click(10, 20)
+            assert result["status"] == "ok"
+            assert len(dry.log) == 1
+        finally:
+            set_backend(None)
+
+    def test_module_level_click_delegates(self):
+        from xclaw.action import set_backend, click
+        from xclaw.action.dry_run_backend import DryRunBackend
+
+        dry = DryRunBackend()
+        set_backend(dry)
+        try:
+            result = click(50, 60)
+            assert result["status"] == "ok"
+            assert dry.log[-1]["x"] == 50
+        finally:
+            set_backend(None)
+
+    def test_module_level_type_text_delegates(self):
+        from xclaw.action import set_backend, type_text
+        from xclaw.action.dry_run_backend import DryRunBackend
+
+        dry = DryRunBackend()
+        set_backend(dry)
+        try:
+            result = type_text("hi")
+            assert result["status"] == "ok"
+            assert dry.log[-1]["text"] == "hi"
+        finally:
+            set_backend(None)
 
 
 # ---------------------------------------------------------------------------
@@ -39,42 +149,49 @@ class TestPlatformRouter:
 
 
 class TestMouseAPI:
-    @patch("xclaw.action.click")
-    @patch("xclaw.action.double_click")
-    def test_click_returns_dict(self, mock_dbl, mock_click):
+    def test_click_returns_dict(self):
+        from xclaw.action import set_backend
+        from xclaw.action.dry_run_backend import DryRunBackend
         from xclaw.action.mouse import click
 
-        with patch("xclaw.action.mouse.HUMANIZE", False):
+        dry = DryRunBackend()
+        set_backend(dry)
+        try:
             result = click(100, 200, double=False)
+            assert result["status"] == "ok"
+            assert result["action"] == "click"
+            assert result["x"] == 100
+        finally:
+            set_backend(None)
 
-        assert result["status"] == "ok"
-        assert result["action"] == "click"
-        assert result["x"] == 100
-        assert result["y"] == 200
-        assert result["double"] is False
-
-    @patch("xclaw.action.click")
-    @patch("xclaw.action.double_click")
-    def test_double_click_returns_dict(self, mock_dbl, mock_click):
+    def test_double_click_returns_dict(self):
+        from xclaw.action import set_backend
+        from xclaw.action.dry_run_backend import DryRunBackend
         from xclaw.action.mouse import click
 
-        with patch("xclaw.action.mouse.HUMANIZE", False):
+        dry = DryRunBackend()
+        set_backend(dry)
+        try:
             result = click(300, 400, double=True)
+            assert result["action"] == "double_click"
+        finally:
+            set_backend(None)
 
-        assert result["double"] is True
-
-    @patch("xclaw.action.move_to")
-    @patch("xclaw.action.scroll")
-    def test_scroll_returns_dict(self, mock_scroll, mock_move):
+    def test_scroll_returns_dict(self):
+        from xclaw.action import set_backend
+        from xclaw.action.dry_run_backend import DryRunBackend
         from xclaw.action.mouse import scroll
 
-        with patch("xclaw.action.mouse.HUMANIZE", False):
+        dry = DryRunBackend()
+        set_backend(dry)
+        try:
             result = scroll("down", 3, 500, 500)
-
-        assert result["status"] == "ok"
-        assert result["action"] == "scroll"
-        assert result["direction"] == "down"
-        assert result["amount"] == 3
+            assert result["status"] == "ok"
+            assert result["action"] == "scroll"
+            assert result["direction"] == "down"
+            assert result["amount"] == 3
+        finally:
+            set_backend(None)
 
 
 # ---------------------------------------------------------------------------
@@ -83,37 +200,90 @@ class TestMouseAPI:
 
 
 class TestKeyboardAPI:
-    @patch("xclaw.action.type_text")
-    def test_type_text_returns_dict(self, mock_type):
+    def test_type_text_returns_dict(self):
+        from xclaw.action import set_backend
+        from xclaw.action.dry_run_backend import DryRunBackend
         from xclaw.action.keyboard import type_text
 
-        with patch("xclaw.action.keyboard.HUMANIZE", False):
+        dry = DryRunBackend()
+        set_backend(dry)
+        try:
             result = type_text("Hello World")
+            assert result["status"] == "ok"
+            assert result["action"] == "type"
+            assert result["text"] == "Hello World"
+        finally:
+            set_backend(None)
 
-        assert result["status"] == "ok"
-        assert result["action"] == "type"
-        assert result["text"] == "Hello World"
-
-    @patch("xclaw.action.hotkey")
-    def test_press_key_returns_dict(self, mock_hotkey):
+    def test_press_key_returns_dict(self):
+        from xclaw.action import set_backend
+        from xclaw.action.dry_run_backend import DryRunBackend
         from xclaw.action.keyboard import press_key
 
-        with patch("xclaw.action.keyboard.HUMANIZE", False):
+        dry = DryRunBackend()
+        set_backend(dry)
+        try:
             result = press_key("enter")
+            assert result["status"] == "ok"
+            assert result["action"] == "press"
+            assert result["key"] == "enter"
+        finally:
+            set_backend(None)
 
-        assert result["status"] == "ok"
-        assert result["action"] == "press"
-        assert result["key"] == "enter"
-
-    @patch("xclaw.action.hotkey")
-    def test_press_combo_returns_dict(self, mock_hotkey):
+    def test_press_combo_returns_dict(self):
+        from xclaw.action import set_backend
+        from xclaw.action.dry_run_backend import DryRunBackend
         from xclaw.action.keyboard import press_key
 
-        with patch("xclaw.action.keyboard.HUMANIZE", False):
+        dry = DryRunBackend()
+        set_backend(dry)
+        try:
             result = press_key("cmd+c")
+            assert result["key"] == "cmd+c"
+        finally:
+            set_backend(None)
 
-        assert result["key"] == "cmd+c"
-        mock_hotkey.assert_called_once_with("cmd+c")
+
+# ---------------------------------------------------------------------------
+# HumanizeStrategy protocol conformance
+# ---------------------------------------------------------------------------
+
+
+class TestHumanizeStrategy:
+    def test_noop_satisfies_protocol(self):
+        from xclaw.action.humanize_strategy import HumanizeStrategy, NoopStrategy
+
+        s = NoopStrategy()
+        assert isinstance(s, HumanizeStrategy)
+
+    def test_bezier_satisfies_protocol(self):
+        from xclaw.action.humanize_strategy import HumanizeStrategy, BezierStrategy
+
+        s = BezierStrategy()
+        assert isinstance(s, HumanizeStrategy)
+
+    def test_noop_move_calls_fn_directly(self):
+        from xclaw.action.humanize_strategy import NoopStrategy
+
+        s = NoopStrategy()
+        calls = []
+        fx, fy = s.move_to_target(100, 200, lambda x, y: calls.append((x, y)))
+        assert fx == 100
+        assert fy == 200
+        assert calls == [(100, 200)]
+
+    def test_noop_scroll_chunk_returns_all(self):
+        from xclaw.action.humanize_strategy import NoopStrategy
+
+        s = NoopStrategy()
+        assert s.scroll_chunk(10) == 10
+
+    def test_bezier_scroll_chunk_returns_subset(self):
+        from xclaw.action.humanize_strategy import BezierStrategy
+
+        s = BezierStrategy()
+        chunk = s.scroll_chunk(100)
+        assert 1 <= chunk <= 100
 
 
 # ---------------------------------------------------------------------------

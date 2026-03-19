@@ -120,8 +120,6 @@ def type_text(text: str):
             # Chinese, Japanese, Korean, emoji → Unicode direct injection
             _type_unicode_char(char)
 
-        delay = random.gauss(0.08, 0.025)
-        time.sleep(max(0.03, delay))
 
 
 def hotkey(combo: str):

@@ -1,20 +1,69 @@
-"""Action layer platform router.
+"""Action layer — singleton ActionBackend + backward-compatible module-level API."""
 
-Windows: ctypes SendInput
-macOS:   Quartz CGEvent
-"""
+from __future__ import annotations
 
-import platform
+from typing import TYPE_CHECKING
 
-_system = platform.system()
+if TYPE_CHECKING:
+    from xclaw.action.backend import ActionBackend
 
-if _system == "Windows":
-    from xclaw.action.mouse_win32 import click, double_click, scroll, move_to
-    from xclaw.action.keyboard_win32 import type_text, hotkey
-elif _system == "Darwin":
-    from xclaw.action.mouse_darwin import click, double_click, scroll, move_to
-    from xclaw.action.keyboard_darwin import type_text, hotkey
-else:
-    raise OSError(f"Unsupported platform: {_system}")
+__all__ = ["click", "double_click", "scroll", "move_to", "type_text", "hotkey",
+           "get_backend", "set_backend"]
 
-__all__ = ["click", "double_click", "scroll", "move_to", "type_text", "hotkey"]
+_backend: ActionBackend | None = None
+
+
+def get_backend() -> ActionBackend:
+    """Return the active ActionBackend, creating a NativeActionBackend on first call."""
+    global _backend
+    if _backend is None:
+        from xclaw.config import (
+            HUMANIZE, BEZIER_DURATION_RANGE, BEZIER_STEPS, TYPE_DELAY_RANGE,
+        )
+        from xclaw.action.native_backend import NativeActionBackend
+
+        if HUMANIZE:
+            from xclaw.action.humanize_strategy import BezierStrategy
+            strategy = BezierStrategy(
+                duration_range=BEZIER_DURATION_RANGE,
+                bezier_steps=BEZIER_STEPS,
+                type_delay_range=TYPE_DELAY_RANGE,
+            )
+        else:
+            from xclaw.action.humanize_strategy import NoopStrategy
+            strategy = NoopStrategy()
+
+        _backend = NativeActionBackend(humanize=strategy)
+    return _backend
+
+
+def set_backend(backend: ActionBackend) -> None:
+    """Replace the active ActionBackend (e.g. with DryRunBackend for tests)."""
+    global _backend
+    _backend = backend
+
+
+# -- Backward-compatible module-level functions ----------------------------
+
+def click(x: int, y: int, button: str = "left"):
+    return get_backend().click(x, y, button)
+
+
+def double_click(x: int, y: int):
+    return get_backend().double_click(x, y)
+
+
+def scroll(direction: str, steps: int = 3):
+    return get_backend().scroll(direction, steps)
+
+
+def move_to(x: int, y: int):
+    return get_backend().move_to(x, y)
+
+
+def type_text(text: str):
+    return get_backend().type_text(text)
+
+
+def hotkey(combo: str):
+    return get_backend().hotkey(combo)

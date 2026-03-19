@@ -25,13 +25,7 @@ def move_to(x: int, y: int):
 
 
 def click(x: int, y: int, button: str = "left"):
-    from xclaw.action.humanize import bezier_move
-
-    bezier_move(x, y)
-
-    jx, jy = x + random.randint(-2, 2), y + random.randint(-2, 2)
-    move_to(jx, jy)
-    time.sleep(random.uniform(0.02, 0.06))
+    move_to(x, y)
 
     btn_map = {
         "left": (
@@ -52,18 +46,15 @@ def click(x: int, y: int, button: str = "left"):
     }
     down_t, up_t, btn = btn_map.get(button, btn_map["left"])
 
-    ev_down = Quartz.CGEventCreateMouseEvent(None, down_t, (jx, jy), btn)
+    ev_down = Quartz.CGEventCreateMouseEvent(None, down_t, (x, y), btn)
     Quartz.CGEventPost(Quartz.kCGHIDEventTap, ev_down)
     time.sleep(random.uniform(0.04, 0.09))
 
-    ev_up = Quartz.CGEventCreateMouseEvent(None, up_t, (jx, jy), btn)
+    ev_up = Quartz.CGEventCreateMouseEvent(None, up_t, (x, y), btn)
     Quartz.CGEventPost(Quartz.kCGHIDEventTap, ev_up)
 
 
 def double_click(x: int, y: int):
-    from xclaw.action.humanize import bezier_move
-
-    bezier_move(x, y)
     move_to(x, y)
 
     for n in (1, 2):

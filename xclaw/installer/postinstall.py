@@ -66,7 +66,7 @@ def run_postinstall() -> int:
 def _models_present(model_dir: Path) -> bool:
     return (
         (model_dir / "icon_detect" / "model.pt").exists()
-        and (model_dir / "icon_caption_florence" / "model.safetensors").exists()
+        and (model_dir / "icon_caption_minicpm" / "config.json").exists()
     )
 
 

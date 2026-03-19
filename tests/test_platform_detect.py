@@ -166,16 +166,16 @@ class TestPerceptionConfig:
         cfg = PerceptionConfig(
             yolo_device="mps",
             yolo_onnx_ep="CoreMLExecutionProvider",
-            florence2_device="cpu",
-            florence2_dtype="float32",
-            florence2_enabled=True,
-            florence2_conditional=True,
+            caption_device="cpu",
+            caption_dtype="float32",
+            caption_enabled=True,
+            caption_conditional=True,
             ocr_use_gpu=False,
             ocr_det_limit=960,
         )
         desc = cfg.describe()
         assert "YOLO" in desc
-        assert "Florence-2" in desc
+        assert "Caption" in desc
         assert "OCR" in desc
         assert "CoreMLExecutionProvider" in desc
 
@@ -195,8 +195,8 @@ class TestBuildPerceptionConfig:
         cfg = build_perception_config()
         assert cfg.yolo_device == "cuda"
         assert cfg.yolo_onnx_ep == "CUDAExecutionProvider"
-        assert cfg.florence2_device == "cuda"
-        assert cfg.florence2_dtype == "float16"
+        assert cfg.caption_device == "cuda"
+        assert cfg.caption_dtype == "float16"
         assert cfg.ocr_use_gpu is True
 
     @patch("xclaw.platform.gpu.detect_platform")
@@ -208,8 +208,8 @@ class TestBuildPerceptionConfig:
         cfg = build_perception_config()
         assert cfg.yolo_device == "mps"
         assert cfg.yolo_onnx_ep == "CoreMLExecutionProvider"
-        assert cfg.florence2_device == "cpu"
-        assert cfg.florence2_dtype == "float32"
+        assert cfg.caption_device == "cpu"
+        assert cfg.caption_dtype == "float32"
         assert cfg.ocr_use_gpu is False
 
     @patch("xclaw.platform.gpu.detect_platform")
@@ -221,8 +221,8 @@ class TestBuildPerceptionConfig:
         cfg = build_perception_config()
         assert cfg.yolo_device == "cpu"
         assert cfg.yolo_onnx_ep == "CPUExecutionProvider"
-        assert cfg.florence2_device == "cpu"
-        assert cfg.florence2_dtype == "float32"
+        assert cfg.caption_device == "cpu"
+        assert cfg.caption_dtype == "float32"
         assert cfg.ocr_det_limit == 640
 
     @patch("xclaw.platform.gpu.detect_platform")

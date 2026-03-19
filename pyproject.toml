@@ -8,7 +8,7 @@ dependencies = [
     # ── 感知层（跨平台） ──
     "torch>=2.5.0",
     "torchvision>=0.20.0",
-    "transformers>=4.40.0,<4.46.0",
+    "transformers>=4.40.0",
     "safetensors>=0.4.0",
     "accelerate>=0.30.0",
     "einops>=0.8.0",

@@ -214,6 +214,29 @@ def daemon_stop():
         _output({"status": "not_running"})
 
 
+@main.command("daemon-backends")
+def daemon_backends():
+    """List registered perception backends and their stats."""
+    from xclaw.core.daemon import list_backends
+    _output(list_backends())
+
+
+@main.command("daemon-switch-backend")
+@click.argument("name")
+def daemon_switch_backend(name):
+    """Switch the active perception backend."""
+    from xclaw.core.daemon import switch_backend
+    _output(switch_backend(name))
+
+
+@main.command("daemon-backend-status")
+@click.option("--name", default=None, help="Backend name (default: active)")
+def daemon_backend_status(name):
+    """Show status/stats for a perception backend."""
+    from xclaw.core.daemon import backend_status
+    _output(backend_status(name))
+
+
 # ── Setup ─────────────────────────────────────────────────────────
 
 

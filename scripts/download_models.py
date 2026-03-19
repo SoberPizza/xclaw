@@ -21,14 +21,13 @@ OMNIPARSER_FILES = [
     "icon_detect/model.pt",
     "icon_detect/model.yaml",
     "icon_detect/train_args.yaml",
-    "icon_caption/config.json",
-    "icon_caption/generation_config.json",
-    "icon_caption/model.safetensors",
 ]
+
+MINICPM_REPO = "openbmb/MiniCPM-V-2"
 
 
 def download_omniparser(dest_dir: Path, progress_callback=None) -> bool:
-    """Download OmniParser V2 models to *dest_dir*.
+    """Download OmniParser V2 models + MiniCPM-V to *dest_dir*.
 
     *progress_callback*, if provided, is called as ``cb(file_index, total, filename)``
     before each file download starts.
@@ -36,7 +35,7 @@ def download_omniparser(dest_dir: Path, progress_callback=None) -> bool:
     Returns True on success.
     """
     dest_dir.mkdir(parents=True, exist_ok=True)
-    total = len(OMNIPARSER_FILES)
+    total = len(OMNIPARSER_FILES) + 1  # +1 for MiniCPM-V
 
     for idx, f in enumerate(OMNIPARSER_FILES):
         if progress_callback:
@@ -52,13 +51,21 @@ def download_omniparser(dest_dir: Path, progress_callback=None) -> bool:
             check=True,
         )
 
-    # Rename icon_caption → icon_caption_florence
-    src = dest_dir / "icon_caption"
-    dst = dest_dir / "icon_caption_florence"
-    if src.exists() and not dst.exists():
-        src.rename(dst)
-        if not progress_callback:
-            print(f"  Renamed {src.name} → {dst.name}")
+    # Download MiniCPM-V 2.0
+    idx = len(OMNIPARSER_FILES)
+    if progress_callback:
+        progress_callback(idx, total, "MiniCPM-V-2")
+    else:
+        print(f"  ↓ MiniCPM-V-2 (icon caption)")
+
+    minicpm_dir = dest_dir / "icon_caption_minicpm"
+    subprocess.run(
+        [
+            sys.executable, "-m", "huggingface_hub", "download",
+            MINICPM_REPO, "--local-dir", str(minicpm_dir),
+        ],
+        check=True,
+    )
 
     if progress_callback:
         progress_callback(total, total, "done")
@@ -80,7 +87,7 @@ def verify_models(model_dir: Path) -> bool:
     """Check that required model files exist in *model_dir*. Returns True if all present."""
     checks = {
         "YOLO": model_dir / "icon_detect" / "model.pt",
-        "Florence-2": model_dir / "icon_caption_florence" / "model.safetensors",
+        "MiniCPM-V": model_dir / "icon_caption_minicpm" / "config.json",
     }
     all_ok = True
     for name, path in checks.items():

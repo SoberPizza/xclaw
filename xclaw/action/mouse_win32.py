@@ -79,13 +79,7 @@ def move_to(x: int, y: int):
 
 
 def click(x: int, y: int, button: str = "left"):
-    from xclaw.action.humanize import bezier_move
-
-    bezier_move(x, y)
-
-    jx, jy = x + random.randint(-2, 2), y + random.randint(-2, 2)
-    move_to(jx, jy)
-    time.sleep(random.uniform(0.02, 0.06))
+    move_to(x, y)
 
     btn_map = {
         "left": (MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP),
@@ -94,16 +88,13 @@ def click(x: int, y: int, button: str = "left"):
     }
     down_flag, up_flag = btn_map.get(button, btn_map["left"])
 
-    ax, ay = _to_absolute(jx, jy)
+    ax, ay = _to_absolute(x, y)
     _send_mouse(down_flag | MOUSEEVENTF_ABSOLUTE, ax, ay)
     time.sleep(random.uniform(0.04, 0.09))
     _send_mouse(up_flag | MOUSEEVENTF_ABSOLUTE, ax, ay)
 
 
 def double_click(x: int, y: int):
-    from xclaw.action.humanize import bezier_move
-
-    bezier_move(x, y)
     move_to(x, y)
 
     ax, ay = _to_absolute(x, y)
