@@ -214,5 +214,16 @@ def daemon_stop():
         _output({"status": "not_running"})
 
 
+# ── Setup ─────────────────────────────────────────────────────────
+
+
+@main.command()
+def setup():
+    """Download models and run post-install initialization."""
+    import sys as _sys
+    from xclaw.installer.postinstall import run_postinstall
+    _sys.exit(run_postinstall())
+
+
 if __name__ == "__main__":
     main()

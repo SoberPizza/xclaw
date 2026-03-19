@@ -59,9 +59,23 @@ xclaw/
     ├── SKILL.md           # Claude Code 技能入口
     ├── commands.md        # 命令参考
     └── workflow.md        # 操作规范与典型流程
+├── installer/
+│   ├── __init__.py        # 安装工具包
+│   ├── postinstall.py     # 安装后初始化（目录结构 + 模型下载 + init）
+│   └── download_gui.py    # Tkinter 模型下载 GUI
+└── skills/
+    ├── SKILL.md           # Claude Code 技能入口
+    ├── commands.md        # 命令参考
+    └── workflow.md        # 操作规范与典型流程
 scripts/
 ├── download_models.py     # 跨平台模型下载（OmniParser V2 + PaddleOCR）
-└── export_yolo_onnx.py    # YOLO .pt → .onnx 导出
+├── export_yolo_onnx.py    # YOLO .pt → .onnx 导出
+├── build_installer.py     # 跨平台安装包构建
+├── installer.iss          # Windows Inno Setup 脚本
+└── macos/
+    ├── Info.plist.template # macOS .app 元数据模板
+    ├── postinstall.sh      # .pkg 安装后脚本
+    └── entitlements.plist  # 签名权限（预留）
 ```
 
 ## 平台适配架构
@@ -87,6 +101,7 @@ scripts/
 | `XCLAW_CDP_HOST` | Chrome DevTools Protocol 地址 | `127.0.0.1` |
 | `XCLAW_CDP_PORT` | Chrome DevTools Protocol 端口 | `9222` |
 | `XCLAW_HOME` | 项目根目录路径（仅非 editable 安装时需要） | 自动推算 |
+| `XCLAW_DATA` | 用户可写数据目录（截图、日志、模型） | 开发模式=PROJECT_ROOT，安装模式=平台用户目录 |
 
 ## 感知引擎
 
@@ -95,7 +110,7 @@ scripts/
   - `OCREngine`：PaddleOCR v4 中英双语
   - `OmniCaption`：Florence-2 图标描述，条件式调用（仅无文字覆盖的图标）
 - `parser.py` 是向后兼容 shim，直接 re-export `PerceptionEngine`
-- 模型目录搜索顺序：`models/` → `weights/` → 相对路径 → `~/.xclaw/models/`
+- 模型目录搜索顺序：`PROJECT_ROOT/models` → `weights/` → `DATA_DIR/models` → `~/.xclaw/models/`
 - 模型下载：`uv run python scripts/download_models.py`
 - ONNX 导出：`uv run python scripts/export_yolo_onnx.py`
 
@@ -124,3 +139,32 @@ uv run pytest                        # 跑默认测试（排除 gpu/bench）
 uv run pytest -m gpu                 # 需要 GPU + 模型
 uv run pytest -m integration         # 集成测试（需要 screenshots/）
 ```
+
+## 安装包构建
+
+轻量安装包仅含 xclaw 源码 + uv 二进制（~30MB），首次启动自动在线安装 Python、依赖和模型。
+
+```bash
+# macOS (.pkg)
+python scripts/build_installer.py --platform macos    # → dist/XClaw-x.x.x.pkg
+
+# Windows (需要 Inno Setup)
+python scripts/build_installer.py --platform windows  # → dist/XClaw-x.x.x-Setup.exe
+```
+
+### 路径架构（安装模式 vs 开发模式）
+
+| 路径 | 开发模式 | 安装模式 |
+|------|---------|---------|
+| `PROJECT_ROOT` | 项目根目录 | `.app/Contents/Resources/xclaw-src` |
+| `DATA_DIR` | = PROJECT_ROOT | macOS: `~/Library/Application Support/X-Claw`，Windows: `%LOCALAPPDATA%\X-Claw` |
+| `MODELS_DIR` | `PROJECT_ROOT/models` | `DATA_DIR/models` |
+| `SCREENSHOTS_DIR` | `PROJECT_ROOT/screenshots` | `DATA_DIR/screenshots` |
+
+### 用户安装流程
+
+1. 双击安装包（.pkg / .exe）
+2. 首次启动自动执行 `uv sync` 安装 Python + 依赖（~1.5GB）
+3. Tkinter GUI 下载模型（~1.3GB）
+4. `xclaw init` 校验权限和模型加载
+5. 完成

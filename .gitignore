@@ -11,6 +11,10 @@ OmniParser/
 weights/
 models/
 
+# Installer artifacts
+*.pkg
+*.dmg
+
 # Virtual environments
 .venv
 *.env

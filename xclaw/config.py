@@ -9,9 +9,29 @@ os.environ.setdefault("YOLO_VERBOSE", "False")
 # 项目根目录
 PROJECT_ROOT = Path(os.environ["XCLAW_HOME"]) if "XCLAW_HOME" in os.environ else Path(__file__).resolve().parent.parent
 
+
+def _resolve_data_dir() -> Path:
+    """User-writable data directory (screenshots, logs, state, models)."""
+    if "XCLAW_DATA" in os.environ:
+        return Path(os.environ["XCLAW_DATA"])
+    # 开发模式：pyproject.toml 存在 → 就用 PROJECT_ROOT
+    if (PROJECT_ROOT / "pyproject.toml").exists():
+        return PROJECT_ROOT
+    # 安装模式
+    import platform as _plat
+    if _plat.system() == "Darwin":
+        return Path.home() / "Library" / "Application Support" / "X-Claw"
+    elif _plat.system() == "Windows":
+        return Path(os.environ.get("LOCALAPPDATA", str(Path.home()))) / "X-Claw"
+    return Path.home() / ".xclaw"
+
+
+DATA_DIR = _resolve_data_dir()
+DATA_DIR.mkdir(parents=True, exist_ok=True)
+
 # ── 路径 ──
-SCREENSHOTS_DIR = PROJECT_ROOT / "screenshots"
-LOGS_DIR = PROJECT_ROOT / "logs"
+SCREENSHOTS_DIR = DATA_DIR / "screenshots"
+LOGS_DIR = DATA_DIR / "logs"
 WEIGHTS_DIR = PROJECT_ROOT / "weights"
 
 # ── OmniParser ──
@@ -43,7 +63,7 @@ ROW_Y_TOLERANCE = 8
 CACHE_MAX_SIZE = 8
 
 # ── Context: Smart Perception ──
-CONTEXT_STATE_PATH = SCREENSHOTS_DIR / ".context_state.json"
+CONTEXT_STATE_PATH = DATA_DIR / ".context_state.json"
 CONTEXT_CACHE_TTL = 15.0                    # 缓存过期秒数
 CONTEXT_MAX_CONSECUTIVE_CHEAP = 4           # 连续 L0/L1 上限
 CONTEXT_DIFF_THRESHOLD_UNCHANGED = 0.01     # 低于此 = 无变化
@@ -62,7 +82,18 @@ CONTEXT_POST_ACTION_DELAY = 0.15             # 操作后截屏前等待秒数（
 # ── 平台适配 ──
 from xclaw.platform import PLATFORM, PERCEPTION_CONFIG  # noqa: E402
 
-# 模型目录（新旧兼容）
-MODELS_DIR = PROJECT_ROOT / "models"
-if not (MODELS_DIR / "icon_detect").exists():
-    MODELS_DIR = WEIGHTS_DIR  # fallback to weights/
+# 模型目录（搜索顺序：PROJECT_ROOT/models → weights → DATA_DIR/models → ~/.xclaw/models）
+def _resolve_models_dir() -> Path:
+    for candidate in [
+        PROJECT_ROOT / "models",
+        WEIGHTS_DIR,
+        DATA_DIR / "models",
+        Path.home() / ".xclaw" / "models",
+    ]:
+        if (candidate / "icon_detect").exists():
+            return candidate
+    # 默认返回首选路径（模型可能尚未下载）
+    return PROJECT_ROOT / "models" if (PROJECT_ROOT / "pyproject.toml").exists() else DATA_DIR / "models"
+
+
+MODELS_DIR = _resolve_models_dir()

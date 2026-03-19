@@ -55,9 +55,15 @@ def ensure_daemon():
 
     daemon_script = str(Path(__file__).parent / "daemon_server.py")
 
+    env = os.environ.copy()
+    from xclaw.config import PROJECT_ROOT, DATA_DIR
+    env.setdefault("XCLAW_HOME", str(PROJECT_ROOT))
+    env.setdefault("XCLAW_DATA", str(DATA_DIR))
+
     if _system == "Darwin":
         subprocess.Popen(
             [sys.executable, daemon_script],
+            env=env,
             stdout=open("/tmp/xclaw_daemon.log", "w"),
             stderr=subprocess.STDOUT,
             start_new_session=True,
@@ -65,6 +71,7 @@ def ensure_daemon():
     elif _system == "Windows":
         subprocess.Popen(
             [sys.executable, daemon_script],
+            env=env,
             creationflags=0x00000008 | 0x00000010,  # DETACHED + CREATE_NO_WINDOW
             close_fds=True,
         )

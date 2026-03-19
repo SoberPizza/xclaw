@@ -22,9 +22,6 @@ class PipelineResult:
     columns: list[Column] | None = None
     reading_order: list[int] | None = None
 
-    # Plugin
-    plugin_name: str | None = None
-
     # Timing
     timing: dict[str, int] = field(default_factory=dict)
 
@@ -33,7 +30,7 @@ class PipelineResult:
         result: dict = {}
 
         # Plugin
-        result["plugin"] = self.plugin_name
+        
 
         if self.columns is not None:
             # L2 output: layout + annotated elements
@@ -99,14 +96,12 @@ def run_pipeline(
     image_path: str,
     *,
     skip_l2: bool = False,
-    plugin=None,
 ) -> PipelineResult:
     """Execute the two-layer vision pipeline.
 
     Args:
         image_path: Path to screenshot image.
         skip_l2: Stop after L1 (perception only).
-        plugin: Optional SitePlugin instance for enhancement hooks.
 
     Returns:
         PipelineResult with timing information.
@@ -168,8 +163,6 @@ def run_pipeline(
     # Apply merge dedup
     elements = merge_elements(elements)
 
-    if plugin:
-        elements = plugin.enhance_anchors(elements, (w, h))
 
     timing["l1_ms"] = (time.perf_counter_ns() - t0) // 1_000_000
 
@@ -178,7 +171,6 @@ def run_pipeline(
             elements=elements,
             resolution=(w, h),
             image_path=image_path,
-            plugin_name=plugin.__class__.__name__ if plugin else None,
             timing=timing,
         )
 
@@ -199,12 +191,7 @@ def run_pipeline(
         image_path=image_path,
         columns=columns,
         reading_order=reading_order,
-        plugin_name=plugin.__class__.__name__ if plugin else None,
         timing=timing,
     )
-
-    if plugin:
-        result = plugin.post_process(result)
-        result.timing = timing
 
     return result

@@ -23,7 +23,6 @@ Observe the screen. Takes a screenshot, diffs against previous state, and automa
 
 ```json
 {
-  "plugin": null,
   "layout": {
     "columns": [
       {"id": 0, "x_range": [0, 960], "width_pct": 50, "element_count": 30},
@@ -99,7 +98,6 @@ Every action command returns:
     "y": 300
   },
   "perception": {
-    "plugin": null,
     "layout": {...},
     "elements": [...],
     "timing": {...}
