@@ -49,12 +49,10 @@ BEZIER_DURATION_RANGE = (0.3, 0.8)
 BEZIER_STEPS = 30
 TYPE_DELAY_RANGE = (0.05, 0.15)
 
-# ── Chrome DevTools Protocol ──
-CDP_HOST = os.environ.get("XCLAW_CDP_HOST", "127.0.0.1")
-CDP_PORT = int(os.environ.get("XCLAW_CDP_PORT", "9222"))
-
 # ── L1: Perception / Merger ──
 MERGER_IOU_THRESHOLD = 0.5
+MERGER_SMALL_ELEMENT_SIZE = 32               # 双维低于此值的元素视为"小元素"
+MERGER_SMALL_ELEMENT_CENTER_DIST = 15        # 小元素去重：中心点距离阈值（px）
 
 # ── L2: Spatial Aggregation ──
 ROW_Y_TOLERANCE = 8
@@ -78,6 +76,12 @@ CONTEXT_CONFIDENCE_L0 = 0.8                 # predict 置信度阈值: L0
 CONTEXT_CONFIDENCE_L1 = 0.5                 # predict 置信度阈值: L1
 CONTEXT_CONFIDENCE_L2 = 0.3                 # predict 置信度阈值: L2
 CONTEXT_POST_ACTION_DELAY = 0.15             # 操作后截屏前等待秒数（等待视觉反馈）
+CONTEXT_POST_ACTION_MIN_LEVEL = "L1"         # 操作后最低感知等级（跳过 L0 缓存）
+
+# ── Daemon: Tiered Idle Unloading ──
+DAEMON_IDLE_UNLOAD_CAPTION_S = 300           # 5min: 卸载 MiniCPM-V（最重、最少用）
+DAEMON_IDLE_UNLOAD_ALL_S = 900               # 15min: 卸载全部模型
+DAEMON_IDLE_EXIT_S = 1800                    # 30min: 退出进程
 
 # ── 平台适配 ──
 from xclaw.platform import PLATFORM, PERCEPTION_CONFIG  # noqa: E402

@@ -1,8 +1,28 @@
 # X-Claw
 
-跨平台视觉代理框架：截屏 → YOLO + PaddleOCR + MiniCPM-V 感知 → 原生键鼠操作。
+纯视觉、纯键鼠的跨平台桌面代理框架。模拟真人使用电脑的完整认知回路：
+
+**截屏（眼睛）→ YOLO + PaddleOCR + MiniCPM-V 感知（视觉皮层）→ 结构化 JSON（语言区）→ OS 原生键鼠操作（手）**
+
+感知层将屏幕像素转化为带编号的元素列表（纯文本 JSON），外部 Agent 的 LLM 仅消费该文本做决策，不接触任何图像数据。
 
 支持 Windows (CUDA) + macOS (Apple Silicon MPS/CoreML)。
+
+## 核心约束（不可违背）
+
+X-Claw 是一个数字人的感官和手脚。以下约束定义了项目的身份边界，任何违反均视为架构缺陷：
+
+1. **唯一信息源是屏幕像素。** 不读取 DOM、不调用无障碍树（Accessibility API）、不使用浏览器 DevTools / CDP、不做进程间内存读取。一切状态信息必须从截屏中重建。
+
+2. **唯一输出通道是 OS 原生键鼠事件。** macOS 通过 Quartz CGEvent、Windows 通过 ctypes SendInput。不注入 JavaScript、不调用应用程序 API。复制粘贴（Cmd/Ctrl+C/V）属于真人正常操作，Agent 可以使用；但禁止将剪贴板作为绕过键鼠的隐蔽数据传输通道。
+
+3. **感知层输出纯文本，LLM 不接触图像。** 感知管线的最终产物是结构化 JSON（元素 ID、bbox、类型、文本内容），外部 Agent 的 LLM 仅基于该文本做推理和决策。不向 LLM 传递截图、不依赖多模态能力、不引入"让 LLM 看一眼图片辅助判断"的回退路径。视觉理解的全部责任由感知层承担。
+
+4. **服务单个 Agent。** 架构为单 Agent 独占设计，不考虑多 Agent 并行、分布式调度、远程 RPC。守护进程常驻模型是为了消除单 Agent 的冷启动延迟，不是为了服务多客户端。
+
+5. **感知层与执行层通过协议解耦，但不引入中间层语义推理。** 感知层输出带编号标注的元素列表，所有高层语义理解（意图识别、任务规划）由外部 LLM 在纯文本域完成。禁止在管线中插入"UI 语义分类器"、"控件类型推断器"、"意图预测器"等中间智能层。
+
+6. **反检测是一等需求。** HumanizeStrategy 不是可选的锦上添花，而是与感知、执行同等重要的核心能力。任何新增的操作路径都必须经过人性化策略层，不允许存在绕过 HumanizeStrategy 的快捷通道。
 
 ## 开发环境
 
@@ -119,8 +139,6 @@ scripts/
 | 变量 | 说明 | 默认 |
 |------|------|------|
 | `XCLAW_HUMANIZE` | 设为 `1` 启用人性化鼠标移动和打字延迟 | `0` |
-| `XCLAW_CDP_HOST` | Chrome DevTools Protocol 地址 | `127.0.0.1` |
-| `XCLAW_CDP_PORT` | Chrome DevTools Protocol 端口 | `9222` |
 | `XCLAW_HOME` | 项目根目录路径（仅非 editable 安装时需要） | 自动推算 |
 | `XCLAW_DATA` | 用户可写数据目录（截图、日志、模型） | 开发模式=PROJECT_ROOT，安装模式=平台用户目录 |
 

@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import contextlib
 import threading
 from dataclasses import dataclass
+from typing import Generator
 
 from xclaw.core.perception.backend import PerceptionBackend
 
@@ -36,11 +38,52 @@ class BackendEntry:
         }
 
 
-class BackendRegistry:
-    """Thread-safe named backend registry. Daemon holds a single instance."""
+class _RWLock:
+    """Simple readers-writer lock.
+
+    Multiple concurrent readers are allowed; a writer waits for all readers
+    to release and blocks new readers until done.
+    """
 
     def __init__(self):
-        self._lock = threading.Lock()
+        self._cond = threading.Condition(threading.Lock())
+        self._readers = 0
+        self._writer = False
+
+    def acquire_read(self) -> None:
+        with self._cond:
+            while self._writer:
+                self._cond.wait()
+            self._readers += 1
+
+    def release_read(self) -> None:
+        with self._cond:
+            self._readers -= 1
+            if self._readers == 0:
+                self._cond.notify_all()
+
+    def acquire_write(self) -> None:
+        with self._cond:
+            while self._writer or self._readers > 0:
+                self._cond.wait()
+            self._writer = True
+
+    def release_write(self) -> None:
+        with self._cond:
+            self._writer = False
+            self._cond.notify_all()
+
+
+class BackendRegistry:
+    """Thread-safe named backend registry. Daemon holds a single instance.
+
+    Uses a readers-writer lock so that ``switch()`` waits for in-flight
+    perception calls (readers) to finish before swapping the active backend.
+    """
+
+    def __init__(self):
+        self._lock = threading.Lock()          # protects _backends dict
+        self._rw = _RWLock()                   # guards active backend lifecycle
         self._backends: dict[str, BackendEntry] = {}
         self._active_name: str | None = None
 
@@ -73,16 +116,41 @@ class BackendRegistry:
             return self._backends[self._active_name]
 
     def switch(self, name: str) -> dict:
-        """Switch active backend (lazy-loads if needed). Returns status dict."""
-        with self._lock:
-            if name not in self._backends:
-                raise KeyError(f"Backend '{name}' not registered")
-            entry = self._backends[name]
-            if not entry.loaded:
-                entry.backend.load_models()
-                entry.loaded = True
-            self._active_name = name
-            return {"status": "ok", "active": name}
+        """Switch active backend (lazy-loads if needed). Returns status dict.
+
+        Acquires the write lock, blocking until all in-flight perception calls
+        (readers) complete, then swaps the active backend pointer.
+        """
+        self._rw.acquire_write()
+        try:
+            with self._lock:
+                if name not in self._backends:
+                    raise KeyError(f"Backend '{name}' not registered")
+                entry = self._backends[name]
+                if not entry.loaded:
+                    entry.backend.load_models()
+                    entry.loaded = True
+                self._active_name = name
+                return {"status": "ok", "active": name}
+        finally:
+            self._rw.release_write()
+
+    @contextlib.contextmanager
+    def with_active(self) -> Generator[tuple[PerceptionBackend, BackendEntry], None, None]:
+        """Context manager that holds the read lock while using the active backend.
+
+        Prevents ``switch()`` from changing the backend mid-operation.
+        Yields ``(backend, entry)`` so callers can record stats on the entry.
+        """
+        self._rw.acquire_read()
+        try:
+            with self._lock:
+                if self._active_name is None:
+                    raise RuntimeError("No backend registered")
+                entry = self._backends[self._active_name]
+            yield entry.backend, entry
+        finally:
+            self._rw.release_read()
 
     def list_backends(self) -> dict:
         with self._lock:

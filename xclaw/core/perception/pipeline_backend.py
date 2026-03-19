@@ -110,6 +110,27 @@ class PipelineBackend:
 
     # ── internals ──
 
+    def unload_caption(self) -> None:
+        """Release MiniCPM-V model from memory (heaviest, least used)."""
+        if self._caption is not None:
+            del self._caption
+            self._caption = None
+            import gc
+            gc.collect()
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+
+    def unload_all(self) -> None:
+        """Release all models from memory."""
+        self.unload_caption()
+        self._detector = None
+        self._ocr = None
+        self._models_loaded = False
+        import gc
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+
     @staticmethod
     def _find_model_dir() -> Path:
         candidates = [

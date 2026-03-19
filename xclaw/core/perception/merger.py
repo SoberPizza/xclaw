@@ -1,6 +1,12 @@
 """IoU-based element deduplication and merging."""
 
-from xclaw.config import MERGER_IOU_THRESHOLD
+import math
+
+from xclaw.config import (
+    MERGER_IOU_THRESHOLD,
+    MERGER_SMALL_ELEMENT_CENTER_DIST,
+    MERGER_SMALL_ELEMENT_SIZE,
+)
 from xclaw.core.perception.types import RawElement
 
 
@@ -22,6 +28,20 @@ def box_iou(a: tuple[int, int, int, int], b: tuple[int, int, int, int]) -> float
     if union <= 0:
         return 0.0
     return inter / union
+
+
+def _is_small(bbox: tuple[int, int, int, int], threshold: int = MERGER_SMALL_ELEMENT_SIZE) -> bool:
+    """True if element is smaller than *threshold* in both dimensions."""
+    return (bbox[2] - bbox[0]) < threshold and (bbox[3] - bbox[1]) < threshold
+
+
+def _center_distance(a: tuple[int, int, int, int], b: tuple[int, int, int, int]) -> float:
+    """Euclidean distance between bbox centers."""
+    acx = (a[0] + a[2]) / 2
+    acy = (a[1] + a[3]) / 2
+    bcx = (b[0] + b[2]) / 2
+    bcy = (b[1] + b[3]) / 2
+    return math.hypot(acx - bcx, acy - bcy)
 
 
 def merge_elements(
@@ -53,8 +73,13 @@ def merge_elements(
     for elem in sorted_elems:
         merged = False
         for ki, kept_elem in enumerate(kept):
-            iou = box_iou(elem.bbox, kept_elem.bbox)
-            if iou > iou_threshold:
+            # Adaptive overlap metric: small elements use center-distance
+            if _is_small(elem.bbox) and _is_small(kept_elem.bbox):
+                is_overlap = _center_distance(elem.bbox, kept_elem.bbox) < MERGER_SMALL_ELEMENT_CENTER_DIST
+            else:
+                is_overlap = box_iou(elem.bbox, kept_elem.bbox) > iou_threshold
+
+            if is_overlap:
                 if elem.type == kept_elem.type:
                     # Same type, high overlap → duplicate, discard
                     merged = True

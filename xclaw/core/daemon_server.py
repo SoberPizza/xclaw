@@ -1,4 +1,4 @@
-"""Cross-platform perception daemon server.
+r"""Cross-platform perception daemon server.
 
 macOS: Unix Domain Socket (/tmp/xclaw.sock)
 Windows: Named Pipe (\\.\pipe\xclaw_perception)
@@ -16,7 +16,6 @@ from xclaw.core.backend_registry import BackendRegistry
 
 _system = platform.system()
 PID_FILE = Path.home() / ".xclaw" / "daemon.pid"
-IDLE_TIMEOUT = 300
 
 
 class DaemonServer:
@@ -56,17 +55,19 @@ class DaemonServer:
         elif cmd == "look":
             self._ensure_engine()
             t0 = time.monotonic()
-            try:
-                result = self.engine.full_look(
-                    region=request.get("region"),
-                    with_image=request.get("with_image", False),
-                )
-                elapsed_ms = (time.monotonic() - t0) * 1000
-                self.registry.active_entry.record_call(elapsed_ms)
-                return result
-            except Exception as e:
-                self.registry.active_entry.record_error()
-                raise
+            with self.registry.with_active() as (backend, entry):
+                try:
+                    # Use the engine (its _backend is set during _ensure_engine)
+                    result = self.engine.full_look(
+                        region=request.get("region"),
+                        with_image=request.get("with_image", False),
+                    )
+                    elapsed_ms = (time.monotonic() - t0) * 1000
+                    entry.record_call(elapsed_ms)
+                    return result
+                except Exception as e:
+                    entry.record_error()
+                    raise
         elif cmd == "screenshot":
             self._ensure_engine()
             return self.engine.screenshot_only(region=request.get("region"))
@@ -77,8 +78,10 @@ class DaemonServer:
             if not name:
                 return {"status": "error", "message": "Missing 'name' parameter"}
             try:
+                # switch() acquires write lock, waits for in-flight perceive() calls
                 result = self.registry.switch(name)
-                # Update engine backend reference
+                # Engine backend reference is updated after write lock releases,
+                # but the next with_active() call will pick up the new backend.
                 if self.engine is not None:
                     self.engine._backend = self.registry.active
                 return result
@@ -185,20 +188,71 @@ class DaemonServer:
             buf.extend(chunk)
         return bytes(buf)
 
+    def _cleanup_and_exit(self):
+        """Clean up PID/socket files, then exit."""
+        PID_FILE.unlink(missing_ok=True)
+        if _system == "Darwin":
+            try:
+                os.unlink("/tmp/xclaw.sock")
+            except Exception:
+                pass
+        os._exit(0)
+
+    def _unload_caption(self):
+        """Unload MiniCPM-V from active backend (write-lock protected)."""
+        self.registry._rw.acquire_write()
+        try:
+            for entry in self.registry._backends.values():
+                if hasattr(entry.backend, "unload_caption"):
+                    entry.backend.unload_caption()
+        finally:
+            self.registry._rw.release_write()
+
+    def _unload_all_models(self):
+        """Unload all models from active backend (write-lock protected)."""
+        self.registry._rw.acquire_write()
+        try:
+            for entry in self.registry._backends.values():
+                if hasattr(entry.backend, "unload_all"):
+                    entry.backend.unload_all()
+                    entry.loaded = False
+        finally:
+            self.registry._rw.release_write()
+
     def _watchdog(self):
+        from xclaw.config import (
+            DAEMON_IDLE_UNLOAD_CAPTION_S,
+            DAEMON_IDLE_UNLOAD_ALL_S,
+            DAEMON_IDLE_EXIT_S,
+        )
+
+        caption_unloaded = False
+        all_unloaded = False
         while True:
             time.sleep(30)
-            if time.time() - self.last_activity > IDLE_TIMEOUT:
+            idle = time.time() - self.last_activity
+
+            if idle > DAEMON_IDLE_EXIT_S:
                 print(
-                    f"[daemon] Idle {IDLE_TIMEOUT}s, shutting down.", flush=True
+                    f"[daemon] Idle {DAEMON_IDLE_EXIT_S}s, shutting down.",
+                    flush=True,
                 )
-                PID_FILE.unlink(missing_ok=True)
-                if _system == "Darwin":
-                    try:
-                        os.unlink("/tmp/xclaw.sock")
-                    except Exception:
-                        pass
-                os._exit(0)
+                self._cleanup_and_exit()
+
+            elif idle > DAEMON_IDLE_UNLOAD_ALL_S and not all_unloaded:
+                print("[daemon] Idle 15min, unloading all models.", flush=True)
+                self._unload_all_models()
+                all_unloaded = True
+
+            elif idle > DAEMON_IDLE_UNLOAD_CAPTION_S and not caption_unloaded:
+                print("[daemon] Idle 5min, unloading MiniCPM-V.", flush=True)
+                self._unload_caption()
+                caption_unloaded = True
+
+            # Reset flags on activity
+            if idle < DAEMON_IDLE_UNLOAD_CAPTION_S:
+                caption_unloaded = False
+                all_unloaded = False
 
 
 if __name__ == "__main__":

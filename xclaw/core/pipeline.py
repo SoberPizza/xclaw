@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import logging
 import time
 from dataclasses import dataclass, field
 
 from xclaw.core.perception.types import RawElement
 from xclaw.core.spatial.types import Column
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(slots=True)
@@ -99,6 +102,13 @@ def run_pipeline(
 ) -> PipelineResult:
     """Execute the two-layer vision pipeline.
 
+    For CLI and agent callers, prefer ``schedule()`` from
+    ``xclaw.core.context.scheduler`` which adds smart caching,
+    incremental perception, and post-action verification.
+    Use ``run_pipeline()`` directly only when you need a guaranteed
+    full pipeline run without caching semantics (e.g., benchmarks,
+    debug visualization, forced re-perception).
+
     Args:
         image_path: Path to screenshot image.
         skip_l2: Stop after L1 (perception only).
@@ -124,22 +134,39 @@ def run_pipeline(
     screenshot = np.array(img)
 
     # Run detection + OCR + fusion
-    icon_boxes = engine.detect_icons(screenshot)
-    text_boxes = engine.detect_text(screenshot)
+    degraded: list[str] = []
+
+    try:
+        icon_boxes = engine.detect_icons(screenshot)
+    except Exception as e:
+        logger.warning("YOLO detection failed in pipeline, continuing: %s", e)
+        icon_boxes = []
+        degraded.append("yolo")
+
+    try:
+        text_boxes = engine.detect_text(screenshot)
+    except Exception as e:
+        logger.warning("OCR failed in pipeline, continuing: %s", e)
+        text_boxes = []
+        degraded.append("ocr")
 
     from xclaw.core.perception.merger import fuse_results, merge_elements
 
     fused, icons_needing_caption = fuse_results(icon_boxes, text_boxes)
 
     # Conditional caption
-    if (
-        engine.caption_enabled
-        and engine.caption_conditional
-        and icons_needing_caption
-    ):
-        captions = engine.caption_icons(screenshot, icons_needing_caption)
-        for elem, cap in zip(icons_needing_caption, captions):
-            elem["content"] = cap
+    try:
+        if (
+            engine.caption_enabled
+            and engine.caption_conditional
+            and icons_needing_caption
+        ):
+            captions = engine.caption_icons(screenshot, icons_needing_caption)
+            for elem, cap in zip(icons_needing_caption, captions):
+                elem["content"] = cap
+    except Exception as e:
+        logger.warning("Caption failed in pipeline, continuing: %s", e)
+        degraded.append("caption")
 
     # Convert fused dicts to RawElement
     elements = []

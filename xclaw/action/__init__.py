@@ -2,45 +2,74 @@
 
 from __future__ import annotations
 
+import threading
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from xclaw.action.backend import ActionBackend
 
 __all__ = ["click", "double_click", "scroll", "move_to", "type_text", "hotkey",
-           "get_backend", "set_backend"]
+           "get_backend", "set_backend", "freeze_backend"]
 
 _backend: ActionBackend | None = None
+_lock = threading.Lock()
+_frozen = False
+
+
+def _create_default_backend() -> ActionBackend:
+    """Create the default NativeActionBackend with humanize config."""
+    from xclaw.config import (
+        HUMANIZE, BEZIER_DURATION_RANGE, BEZIER_STEPS, TYPE_DELAY_RANGE,
+    )
+    from xclaw.action.native_backend import NativeActionBackend
+
+    if HUMANIZE:
+        from xclaw.action.humanize_strategy import BezierStrategy
+        strategy = BezierStrategy(
+            duration_range=BEZIER_DURATION_RANGE,
+            bezier_steps=BEZIER_STEPS,
+            type_delay_range=TYPE_DELAY_RANGE,
+        )
+    else:
+        from xclaw.action.humanize_strategy import NoopStrategy
+        strategy = NoopStrategy()
+
+    return NativeActionBackend(humanize=strategy)
 
 
 def get_backend() -> ActionBackend:
     """Return the active ActionBackend, creating a NativeActionBackend on first call."""
     global _backend
-    if _backend is None:
-        from xclaw.config import (
-            HUMANIZE, BEZIER_DURATION_RANGE, BEZIER_STEPS, TYPE_DELAY_RANGE,
-        )
-        from xclaw.action.native_backend import NativeActionBackend
-
-        if HUMANIZE:
-            from xclaw.action.humanize_strategy import BezierStrategy
-            strategy = BezierStrategy(
-                duration_range=BEZIER_DURATION_RANGE,
-                bezier_steps=BEZIER_STEPS,
-                type_delay_range=TYPE_DELAY_RANGE,
-            )
-        else:
-            from xclaw.action.humanize_strategy import NoopStrategy
-            strategy = NoopStrategy()
-
-        _backend = NativeActionBackend(humanize=strategy)
-    return _backend
+    with _lock:
+        if _backend is None:
+            _backend = _create_default_backend()
+        return _backend
 
 
 def set_backend(backend: ActionBackend) -> None:
-    """Replace the active ActionBackend (e.g. with DryRunBackend for tests)."""
+    """Replace the active ActionBackend (e.g. with DryRunBackend for tests).
+
+    Raises RuntimeError if ``freeze_backend()`` has been called.
+    """
     global _backend
-    _backend = backend
+    with _lock:
+        if _frozen:
+            raise RuntimeError(
+                "ActionBackend is frozen after freeze_backend(). "
+                "Call set_backend() before any freeze."
+            )
+        _backend = backend
+
+
+def freeze_backend() -> None:
+    """Prevent further ``set_backend()`` calls.
+
+    Call this after initialization in production to guard against runtime
+    backend replacement.  Does NOT affect ``get_backend()``.
+    """
+    global _frozen
+    with _lock:
+        _frozen = True
 
 
 # -- Backward-compatible module-level functions ----------------------------

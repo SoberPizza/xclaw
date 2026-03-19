@@ -81,14 +81,29 @@ class TestScheduleL0:
     @patch("xclaw.core.context.scheduler.take_screenshot")
     @patch("xclaw.core.context.scheduler.peek")
     def test_high_confidence_returns_cache(self, mock_peek, mock_screen, tmp_path, monkeypatch):
-        """When confidence > 0.8 after type, L0 should return cache."""
+        """When confidence > 0.8 with no action, L0 should return cache."""
         state = _mock_state(tmp_path, monkeypatch, confidence=1.0)
         mock_screen.return_value = {"image_path": "screen.png", "resolution": [1920, 1080]}
 
-        result = schedule({"status": "ok", "action": "type", "text": "a"})
+        result = schedule(None)  # no action → L0 allowed
         assert result.level == "L0"
         assert result.confidence > 0.8
         mock_peek.assert_not_called()
+
+    @patch("xclaw.core.context.scheduler.take_screenshot")
+    @patch("xclaw.core.context.scheduler.peek")
+    def test_post_action_skips_l0(self, mock_peek, mock_screen, tmp_path, monkeypatch):
+        """After an action, L0 cache is skipped — at least L1 peek runs."""
+        _mock_state(tmp_path, monkeypatch, confidence=1.0)
+        mock_screen.return_value = {"image_path": "screen.png", "resolution": [1920, 1080]}
+        mock_peek.return_value = PeekResult(
+            changed=False, diff_ratio=0.005, change_regions=[],
+            screenshot_path="screen.png", elapsed_ms=40,
+        )
+
+        result = schedule({"status": "ok", "action": "type", "text": "a"})
+        assert result.level == "L1"
+        mock_peek.assert_called_once()
 
 
 class TestScheduleL1:

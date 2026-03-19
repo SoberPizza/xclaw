@@ -7,6 +7,7 @@ macOS: uv run --extra mac python scripts/download_models.py
 Win:   uv run --extra win python scripts/download_models.py
 """
 
+import hashlib
 import os
 import platform
 import subprocess
@@ -24,6 +25,45 @@ OMNIPARSER_FILES = [
 ]
 
 MINICPM_REPO = "openbmb/MiniCPM-V-2"
+
+# SHA256 prefix manifest — warn-only, does not block loading.
+# Compute with: python -c "import hashlib; print(hashlib.sha256(open(f,'rb').read()).hexdigest()[:16])"
+# Set to None for files where the hash is not yet known.
+MODEL_MANIFEST: dict[str, dict] = {
+    "icon_detect/model.pt": {"min_size_mb": 20},
+    "icon_detect/model.yaml": {"min_size_mb": 0.001},
+    "icon_caption_minicpm/config.json": {"min_size_mb": 0.001},
+}
+
+
+def _sha256_prefix(path: Path, prefix_len: int = 16) -> str:
+    """Return the first *prefix_len* hex chars of a file's SHA256."""
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(65536), b""):
+            h.update(chunk)
+    return h.hexdigest()[:prefix_len]
+
+
+def _download_with_retry(
+    cmd: list[str],
+    max_retries: int = 3,
+    label: str = "",
+) -> None:
+    """Run a subprocess command with exponential-backoff retry."""
+    import time
+
+    for attempt in range(max_retries):
+        try:
+            subprocess.run(cmd, check=True)
+            return
+        except subprocess.CalledProcessError:
+            if attempt == max_retries - 1:
+                raise
+            wait = (2 ** attempt) * 2  # 2s, 4s, 8s
+            desc = f" ({label})" if label else ""
+            print(f"  ⚠ Download failed{desc}, retrying in {wait}s... ({attempt + 1}/{max_retries})")
+            time.sleep(wait)
 
 
 def download_omniparser(dest_dir: Path, progress_callback=None) -> bool:
@@ -43,12 +83,12 @@ def download_omniparser(dest_dir: Path, progress_callback=None) -> bool:
         else:
             print(f"  ↓ {f}")
 
-        subprocess.run(
+        _download_with_retry(
             [
                 sys.executable, "-m", "huggingface_hub", "download",
                 OMNIPARSER_REPO, f, "--local-dir", str(dest_dir),
             ],
-            check=True,
+            label=f,
         )
 
     # Download MiniCPM-V 2.0
@@ -59,12 +99,12 @@ def download_omniparser(dest_dir: Path, progress_callback=None) -> bool:
         print(f"  ↓ MiniCPM-V-2 (icon caption)")
 
     minicpm_dir = dest_dir / "icon_caption_minicpm"
-    subprocess.run(
+    _download_with_retry(
         [
             sys.executable, "-m", "huggingface_hub", "download",
             MINICPM_REPO, "--local-dir", str(minicpm_dir),
         ],
-        check=True,
+        label="MiniCPM-V-2",
     )
 
     if progress_callback:
@@ -84,7 +124,11 @@ def init_paddleocr() -> bool:
 
 
 def verify_models(model_dir: Path) -> bool:
-    """Check that required model files exist in *model_dir*. Returns True if all present."""
+    """Check that required model files exist in *model_dir*.
+
+    Validates file existence, minimum size, and SHA256 prefix (if known).
+    Returns True if all critical checks pass.
+    """
     checks = {
         "YOLO": model_dir / "icon_detect" / "model.pt",
         "MiniCPM-V": model_dir / "icon_caption_minicpm" / "config.json",
@@ -93,7 +137,22 @@ def verify_models(model_dir: Path) -> bool:
     for name, path in checks.items():
         if path.exists():
             mb = path.stat().st_size / (1024 * 1024)
-            print(f"  ✅ {name}: {mb:.1f} MB")
+            # Check minimum size from manifest
+            rel = str(path.relative_to(model_dir))
+            manifest_entry = MODEL_MANIFEST.get(rel, {})
+            min_mb = manifest_entry.get("min_size_mb", 0)
+            if mb < min_mb:
+                print(f"  ⚠️  {name}: {mb:.1f} MB (expected >= {min_mb} MB, possibly truncated)")
+                all_ok = False
+            else:
+                status = f"✅ {name}: {mb:.1f} MB"
+                # SHA256 check if hash is known
+                expected_hash = manifest_entry.get("sha256_prefix")
+                if expected_hash:
+                    actual_hash = _sha256_prefix(path)
+                    if actual_hash != expected_hash:
+                        status += f" ⚠ hash mismatch (got {actual_hash}, expected {expected_hash})"
+                print(f"  {status}")
         else:
             print(f"  ❌ {name}: MISSING at {path}")
             all_ok = False

@@ -6,7 +6,11 @@ import logging
 import time
 from dataclasses import dataclass, field
 
-from xclaw.config import CONTEXT_MAX_CONSECUTIVE_CHEAP, CONTEXT_POST_ACTION_DELAY
+from xclaw.config import (
+    CONTEXT_MAX_CONSECUTIVE_CHEAP,
+    CONTEXT_POST_ACTION_DELAY,
+    CONTEXT_POST_ACTION_MIN_LEVEL,
+)
 from xclaw.core.context.state import ContextState
 from xclaw.core.context.predict import predict
 from xclaw.core.context.peek import peek
@@ -57,7 +61,10 @@ def schedule(
     *,
     force_level: str | None = None,
 ) -> SchedulerResult:
-    """Run the smart perception scheduler, optionally after an action.
+    """Run the smart perception scheduler — the recommended entry point.
+
+    This is the standard entry point for all perception calls in the agent
+    loop.  For an uncached full pipeline run, pass ``force_level="L2"``.
 
     Decision flow:
     1. Force L2 if: no state, force_level="L2", critical action, too many cheap, stale cache
@@ -136,7 +143,13 @@ def schedule(
     escalation.append("L0")
     pred = predict(state)
 
-    if pred.suggest_level == "L0" and pred.cached_result is not None:
+    # After an action, skip L0 cache return — force at least L1 pixel verification
+    post_action = action_result is not None and action_result.get("action")
+    if (
+        pred.suggest_level == "L0"
+        and pred.cached_result is not None
+        and not (post_action and CONTEXT_POST_ACTION_MIN_LEVEL >= "L1")
+    ):
         state.record_perception("L0", screenshot_path=screenshot_path)
         state.confidence = pred.confidence
         state.save()

@@ -27,7 +27,7 @@ pytestmark = pytest.mark.integration
 # ---------------------------------------------------------------------------
 
 class TestSchedulerL0CacheHit:
-    """L0 path: high confidence → return cache without any GPU work."""
+    """L0 path: high confidence with no action → return cache without any GPU work."""
 
     def test_l0_high_confidence_returns_cache(
         self, state_dir, mock_take_screenshot, make_gray_image, tmp_path,
@@ -43,7 +43,6 @@ class TestSchedulerL0CacheHit:
             confidence=1.0,
             consecutive_cheap_count=0,
         )
-        state.record_action("type", {"text": "hello"})
         state.save()
 
         screenshot = make_gray_image(128, name="curr.png")
@@ -51,7 +50,7 @@ class TestSchedulerL0CacheHit:
 
         with patch("xclaw.core.context.scheduler.run_pipeline", side_effect=AssertionError("L2 should not run")), \
              patch("xclaw.core.context.glance._crop_and_parse", side_effect=AssertionError("glance should not run")):
-            result = schedule({"status": "ok", "action": "type", "text": "hello"})
+            result = schedule(None)  # no action → L0 allowed
 
         assert result.level == "L0"
         assert result.confidence > 0.8
@@ -327,11 +326,14 @@ class TestStatePersistenceAcrossCalls:
     ):
         """Simulate 6 CLI calls sharing disk state.
 
+        Post-action minimum level is L1, so type/click actions always
+        trigger at least L1 peek (never L0 cache).
+
         1. No state → L2
-        2. type → L0 (cheap +1)
-        3. type → L0 (cheap +2)
+        2. type → L1 (post-action forces at least L1, cheap +1)
+        3. type → L1 (cheap +2)
         4. click → L1 (cheap +3)
-        5. type → L0 or L1 (cheap +4)
+        5. type → L1 (cheap +4)
         6. type → L2 (consecutive_cheap=4, hit limit)
         """
         img = make_gray_image(128, name="seq.png")
@@ -346,17 +348,17 @@ class TestStatePersistenceAcrossCalls:
         assert s1.confidence == 1.0
         assert s1.consecutive_cheap_count == 0
 
-        # Call 2: type (decay=0.95) → 1.0*0.95=0.95 → L0
+        # Call 2: type → L1 (post-action forces at least peek)
         mock_take_screenshot.set_next(img)
         r2 = schedule({"status": "ok", "action": "type", "text": "b"})
-        assert r2.level == "L0"
+        assert r2.level == "L1"
         s2 = ContextState.load()
         assert s2.consecutive_cheap_count == 1
 
-        # Call 3: type → L0 (cheap +2)
+        # Call 3: type → L1 (cheap +2)
         mock_take_screenshot.set_next(img)
         r3 = schedule({"status": "ok", "action": "type", "text": "c"})
-        assert r3.level == "L0"
+        assert r3.level == "L1"
         s3 = ContextState.load()
         assert s3.consecutive_cheap_count == 2
 
@@ -370,7 +372,7 @@ class TestStatePersistenceAcrossCalls:
         # Call 5: type after L1
         mock_take_screenshot.set_next(img)
         r5 = schedule({"status": "ok", "action": "type", "text": "d"})
-        assert r5.level in ("L0", "L1")
+        assert r5.level == "L1"
         s5 = ContextState.load()
         assert s5.consecutive_cheap_count == 4
 
@@ -425,7 +427,7 @@ class TestTimingReasonableness:
     def test_l0_timing_under_100ms(
         self, state_dir, mock_take_screenshot, make_gray_image,
     ):
-        """L0 cache hit should be very fast."""
+        """L0 cache hit (no action) should be very fast."""
         img = make_gray_image(128, name="timing_l0.png")
 
         state = ContextState(
@@ -438,13 +440,12 @@ class TestTimingReasonableness:
             confidence=1.0,
             consecutive_cheap_count=0,
         )
-        state.record_action("type", {"text": "t"})
         state.save()
 
         mock_take_screenshot.set_next(img)
 
         with patch("xclaw.core.context.scheduler.run_pipeline", side_effect=AssertionError):
-            result = schedule({"status": "ok", "action": "type", "text": "t"})
+            result = schedule(None)  # no action → L0 allowed
 
         assert result.level == "L0"
         assert result.elapsed_ms < 500

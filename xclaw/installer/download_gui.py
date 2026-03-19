@@ -24,6 +24,8 @@ MINICPM_REPO = "openbmb/MiniCPM-V-2"
 
 
 class DownloadGUI:
+    MAX_RETRIES = 3
+
     def __init__(self, model_dir: Path):
         self.model_dir = model_dir
         self.success = False
@@ -78,13 +80,12 @@ class DownloadGUI:
                     file=f"({step}/{len(OMNIPARSER_FILES)}) {f}",
                     progress=step / total_steps * 100,
                 )
-                subprocess.run(
+                self._download_with_retry(
                     [
                         sys.executable, "-m", "huggingface_hub", "download",
                         OMNIPARSER_REPO, f, "--local-dir", str(self.model_dir),
                     ],
-                    check=True,
-                    capture_output=True,
+                    label=f,
                 )
 
             # Download MiniCPM-V 2.0
@@ -95,13 +96,12 @@ class DownloadGUI:
                 progress=step / total_steps * 100,
             )
             minicpm_dir = self.model_dir / "icon_caption_minicpm"
-            subprocess.run(
+            self._download_with_retry(
                 [
                     sys.executable, "-m", "huggingface_hub", "download",
                     MINICPM_REPO, "--local-dir", str(minicpm_dir),
                 ],
-                check=True,
-                capture_output=True,
+                label="MiniCPM-V-2",
             )
 
             # PaddleOCR
@@ -158,6 +158,21 @@ class DownloadGUI:
             if show_retry:
                 self.retry_btn.pack(pady=(10, 0))
         self.root.after(0, _update)
+
+    def _download_with_retry(self, cmd: list[str], label: str = "") -> None:
+        """Run a download subprocess with exponential-backoff retry."""
+        for attempt in range(self.MAX_RETRIES):
+            try:
+                subprocess.run(cmd, check=True, capture_output=True)
+                return
+            except subprocess.CalledProcessError:
+                if attempt == self.MAX_RETRIES - 1:
+                    raise
+                wait = (2 ** attempt) * 2  # 2s, 4s, 8s
+                self._ui(
+                    detail=f"下载失败 ({label})，{wait}s 后重试… ({attempt + 1}/{self.MAX_RETRIES})",
+                )
+                time.sleep(wait)
 
 
 def run_download_gui(model_dir: Path) -> bool:

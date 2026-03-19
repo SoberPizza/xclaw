@@ -160,8 +160,6 @@ XCLAW_HUMANIZE=1 xclaw click 500 300
 | 变量 | 说明 | 默认 |
 |------|------|------|
 | `XCLAW_HUMANIZE` | 设为 `1` 启用人性化鼠标/键盘行为 | `0` |
-| `XCLAW_CDP_HOST` | Chrome DevTools Protocol 地址 | `127.0.0.1` |
-| `XCLAW_CDP_PORT` | Chrome DevTools Protocol 端口 | `9222` |
 | `XCLAW_HOME` | 项目根目录路径（仅非 editable 安装时需要） | 自动推算 |
 
 ## 感知架构

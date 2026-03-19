@@ -6,6 +6,7 @@ which uses YOLO + PaddleOCR + MiniCPM-V 2.0).
 
 import base64
 import io
+import logging
 from typing import Optional
 
 import numpy as np
@@ -14,6 +15,8 @@ from xclaw.config import PERCEPTION_CONFIG
 from xclaw.core.perception.backend import PerceptionBackend
 from xclaw.core.perception.merger import fuse_results
 from xclaw.core.perception.types import TextBox
+
+logger = logging.getLogger(__name__)
 
 
 class PerceptionEngine:
@@ -84,17 +87,28 @@ class PerceptionEngine:
         self._backend.load_models()
 
         t_start = time.time()
+        degraded: list[str] = []
 
         # Step 1: Screenshot
         screenshot = self._capture(region=region)
         t_capture = time.time()
 
         # Step 2: Icon detection
-        icon_boxes = self._backend.detect_icons(screenshot)
+        try:
+            icon_boxes = self._backend.detect_icons(screenshot)
+        except Exception as e:
+            logger.warning("YOLO detection failed, continuing without icons: %s", e)
+            icon_boxes = []
+            degraded.append("yolo")
         t_yolo = time.time()
 
         # Step 3: OCR
-        text_boxes = self._backend.detect_text(screenshot)
+        try:
+            text_boxes = self._backend.detect_text(screenshot)
+        except Exception as e:
+            logger.warning("OCR failed, continuing without text: %s", e)
+            text_boxes = []
+            degraded.append("ocr")
         t_ocr = time.time()
 
         # Step 4: Spatial fusion
@@ -102,13 +116,17 @@ class PerceptionEngine:
         t_merge = time.time()
 
         # Step 5: Conditional caption
-        if (
-            self._backend.caption_enabled
-            and icons_needing_caption
-        ):
-            captions = self._backend.caption_icons(screenshot, icons_needing_caption)
-            for elem, cap in zip(icons_needing_caption, captions):
-                elem["content"] = cap
+        try:
+            if (
+                self._backend.caption_enabled
+                and icons_needing_caption
+            ):
+                captions = self._backend.caption_icons(screenshot, icons_needing_caption)
+                for elem, cap in zip(icons_needing_caption, captions):
+                    elem["content"] = cap
+        except Exception as e:
+            logger.warning("Caption failed, continuing without captions: %s", e)
+            degraded.append("caption")
         t_caption = time.time()
 
         # Step 6: Assign sequential IDs
@@ -131,6 +149,9 @@ class PerceptionEngine:
                 "total_ms": round((t_caption - t_start) * 1000),
             },
         }
+
+        if degraded:
+            result["degraded"] = degraded
 
         if with_image:
             result["image_b64"] = self._encode_image(screenshot)

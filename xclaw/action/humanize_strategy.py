@@ -97,13 +97,17 @@ class BezierStrategy:
             sy + dy * random.uniform(0.7, 1.0) + random.uniform(-50, 50),
         )
         duration = random.uniform(*self.duration_range)
-        interval = duration / self.bezier_steps
+        t0 = time.perf_counter()
         for i in range(1, self.bezier_steps + 1):
             t = i / self.bezier_steps
             t = t * t * (3 - 2 * t)  # ease-in-out
             px, py = bezier_point(t, (sx, sy), cp1, cp2, (ex, ey))
             move_fn(int(px), int(py))
-            time.sleep(interval)
+            # T0-relative sleep: absorbs accumulated timing error
+            target = t0 + (i / self.bezier_steps) * duration
+            remaining = target - time.perf_counter()
+            if remaining > 0:
+                time.sleep(remaining)
 
     def move_to_target(self, x: int, y: int, move_fn: Callable[[int, int], None]) -> tuple[int, int]:
         sx, sy = _get_cursor_pos()
