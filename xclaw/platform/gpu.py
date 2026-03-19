@@ -43,7 +43,7 @@ def build_perception_config() -> PerceptionConfig:
             caption_dtype="float16",
             caption_enabled=True,
             caption_conditional=True,
-            ocr_use_gpu=True,
+            ocr_use_gpu=False,               # CPU — avoids nvidia-cudnn version conflicts
             ocr_det_limit=960,
         )
 

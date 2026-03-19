@@ -72,12 +72,17 @@ def ensure_daemon():
         )
         log_file.close()
     elif _system == "Windows":
+        log_path = Path.home() / ".xclaw" / "daemon.log"
+        log_path.parent.mkdir(exist_ok=True)
+        log_file = open(log_path, "w")
         subprocess.Popen(
             [sys.executable, daemon_script],
             env=env,
-            creationflags=0x00000008 | 0x00000010,  # DETACHED + CREATE_NO_WINDOW
-            close_fds=True,
+            stdout=log_file,
+            stderr=subprocess.STDOUT,
+            creationflags=0x00000008,  # DETACHED_PROCESS
         )
+        log_file.close()
 
     # Wait for ready
     for _ in range(300):
@@ -133,12 +138,29 @@ def _recv_exact(sock, n: int) -> bytes:
 
 def _request_named_pipe(command: dict) -> dict:
     import win32file
+    import win32pipe
+    import pywintypes
 
-    handle = win32file.CreateFile(
-        PIPE_ADDR,
-        win32file.GENERIC_READ | win32file.GENERIC_WRITE,
-        0, None, win32file.OPEN_EXISTING, 0, None,
-    )
+    # Retry loop: wait for pipe to become available
+    for attempt in range(3):
+        try:
+            handle = win32file.CreateFile(
+                PIPE_ADDR,
+                win32file.GENERIC_READ | win32file.GENERIC_WRITE,
+                0, None, win32file.OPEN_EXISTING, 0, None,
+            )
+            break
+        except pywintypes.error as e:
+            if e.winerror == 2:  # ERROR_FILE_NOT_FOUND
+                time.sleep(0.5)
+                continue
+            if e.winerror == 231:  # ERROR_PIPE_BUSY
+                win32pipe.WaitNamedPipe(PIPE_ADDR, 10000)
+                continue
+            raise
+    else:
+        raise ConnectionError("Cannot connect to daemon pipe after 3 attempts")
+
     try:
         data = json.dumps(command).encode("utf-8")
         win32file.WriteFile(handle, data)

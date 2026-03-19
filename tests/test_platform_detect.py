@@ -197,7 +197,7 @@ class TestBuildPerceptionConfig:
         assert cfg.yolo_onnx_ep == "CUDAExecutionProvider"
         assert cfg.caption_device == "cuda"
         assert cfg.caption_dtype == "float16"
-        assert cfg.ocr_use_gpu is True
+        assert cfg.ocr_use_gpu is False
 
     @patch("xclaw.platform.gpu.detect_platform")
     def test_macos_apple_silicon(self, mock_detect):

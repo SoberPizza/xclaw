@@ -36,22 +36,59 @@ def _save_to_logs(result_dict: dict, *, prefix: str = "screen", timestamp: int |
 
 
 def _action_with_look(action_result: dict) -> dict:
-    """Run the smart perception scheduler after an action and return combined result."""
-    from xclaw.core.context.scheduler import schedule
+    """Run the smart perception scheduler (via daemon) after an action and return combined result."""
+    from xclaw.core.daemon import request_perception
 
-    sr = schedule(action_result)
-    perception = sr.perception
+    resp = request_perception({
+        "command": "schedule",
+        "action_result": action_result,
+    })
+    perception = resp.get("perception", resp)
     meta = perception.pop("_perception", {})
     return {
         "action": action_result,
         "perception": perception,
         "_meta": {
-            "level": sr.level,
-            "diff_ratio": sr.diff_ratio,
+            "level": resp.get("level", meta.get("level")),
+            "diff_ratio": resp.get("diff_ratio", meta.get("diff_ratio")),
             "changed": meta.get("changed"),
-            "elapsed_ms": sr.elapsed_ms,
+            "elapsed_ms": resp.get("elapsed_ms", meta.get("elapsed_ms")),
         },
     }
+
+
+def _ensure_cuda_dll_dirs():
+    """Register nvidia DLL directories and pre-load torch for CUDA support.
+
+    On Windows, ``nvidia-*-cu12`` packages install DLLs under
+    ``site-packages/nvidia/<lib>/bin/``.  These directories must be
+    registered via ``os.add_dll_directory`` before torch can load its
+    CUDA libraries.  Importing torch early then ensures CUDA DLLs are
+    findable by later imports (e.g. onnxruntime-gpu, torchvision).
+    """
+    import os
+    import sys
+
+    if sys.platform != "win32":
+        return
+
+    # Register nvidia/*/bin/ directories so CUDA DLLs are findable
+    import site
+
+    for sp in site.getsitepackages():
+        nvidia_dir = os.path.join(sp, "nvidia")
+        if not os.path.isdir(nvidia_dir):
+            continue
+        for sub in os.listdir(nvidia_dir):
+            bin_dir = os.path.join(nvidia_dir, sub, "bin")
+            if os.path.isdir(bin_dir):
+                os.add_dll_directory(bin_dir)
+
+    # Import torch early — registers torch/lib/ and bundled CUDA DLLs
+    try:
+        import torch  # noqa: F401
+    except Exception:
+        pass
 
 
 def _silence_for_cli():
@@ -66,6 +103,9 @@ def _silence_for_cli():
     # Python warnings → off
     warnings.filterwarnings("ignore")
 
+    # Disable ANSI color codes from colorlog (used by PaddleX)
+    os.environ["NO_COLOR"] = "1"
+
     # Third-party env vars
     os.environ["TRANSFORMERS_VERBOSITY"] = "error"
     os.environ["YOLO_VERBOSE"] = "False"
@@ -73,10 +113,16 @@ def _silence_for_cli():
     # PaddlePaddle GLOG (C++ layer) — 2=ERROR, suppresses INFO+WARNING
     os.environ["GLOG_minloglevel"] = "2"
 
-    # PaddleX: skip connectivity check + suppress colored logs
+    # PaddleX: skip connectivity check + disable oneDNN (PIR+oneDNN bug on Win CPU)
     os.environ["PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK"] = "1"
+    os.environ["PADDLE_PDX_ENABLE_MKLDNN_BYDEFAULT"] = "0"
+
+    # Pre-configure paddlex logger BEFORE paddlex is imported.
+    # PaddleX's setup_logging() checks hasHandlers() — pre-adding NullHandler
+    # prevents it from registering its colorlog StreamHandler.
     for name in ("paddlex", "paddlex.inference", "paddlex.utils"):
         lg = logging.getLogger(name)
+        lg.addHandler(logging.NullHandler())
         lg.setLevel(logging.CRITICAL)
         lg.propagate = False
 
@@ -92,6 +138,7 @@ def _silence_for_cli():
 def main():
     """X-Claw Visual Agent CLI"""
     _silence_for_cli()
+    _ensure_cuda_dll_dirs()
 
 
 # ── Perception ────────────────────────────────────────────────────
@@ -100,18 +147,18 @@ def main():
 @main.command()
 def look():
     """Observe the screen."""
-    from xclaw.core.context.scheduler import schedule
+    from xclaw.core.daemon import request_perception
 
-    sr = schedule()
-    perception = sr.perception
+    resp = request_perception({"command": "schedule"})
+    perception = resp.get("perception", resp)
     meta = perception.pop("_perception", {})
     result = {
         **perception,
         "_meta": {
-            "level": sr.level,
-            "diff_ratio": sr.diff_ratio,
+            "level": resp.get("level", meta.get("level")),
+            "diff_ratio": resp.get("diff_ratio", meta.get("diff_ratio")),
             "changed": meta.get("changed"),
-            "elapsed_ms": sr.elapsed_ms,
+            "elapsed_ms": resp.get("elapsed_ms", meta.get("elapsed_ms")),
         },
     }
     _save_to_logs(result)

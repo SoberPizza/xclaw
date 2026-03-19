@@ -24,6 +24,49 @@ class DaemonServer:
         self.registry = BackendRegistry()
         self.engine = None
 
+    @staticmethod
+    def _init_platform():
+        """Platform init that cli.py normally does — needed because daemon is a standalone process."""
+        import logging
+        import warnings
+
+        # ── Silence noisy loggers ──
+        logging.getLogger().setLevel(logging.CRITICAL)
+        warnings.filterwarnings("ignore")
+
+        os.environ["NO_COLOR"] = "1"
+        os.environ["TRANSFORMERS_VERBOSITY"] = "error"
+        os.environ["YOLO_VERBOSE"] = "False"
+        os.environ["GLOG_minloglevel"] = "2"
+        os.environ["PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK"] = "1"
+        os.environ["PADDLE_PDX_ENABLE_MKLDNN_BYDEFAULT"] = "0"
+        os.environ["ORT_LOG_LEVEL"] = "3"
+        os.environ["HF_HUB_DISABLE_PROGRESS_BARS"] = "1"
+        os.environ["TRANSFORMERS_NO_ADVISORY_WARNINGS"] = "1"
+
+        # Pre-configure paddlex loggers before import
+        for name in ("paddlex", "paddlex.inference", "paddlex.utils"):
+            lg = logging.getLogger(name)
+            lg.addHandler(logging.NullHandler())
+            lg.setLevel(logging.CRITICAL)
+            lg.propagate = False
+
+        # ── Windows CUDA DLL registration ──
+        if sys.platform == "win32":
+            import site
+            for sp in site.getsitepackages():
+                nvidia_dir = os.path.join(sp, "nvidia")
+                if not os.path.isdir(nvidia_dir):
+                    continue
+                for sub in os.listdir(nvidia_dir):
+                    bin_dir = os.path.join(nvidia_dir, sub, "bin")
+                    if os.path.isdir(bin_dir):
+                        os.add_dll_directory(bin_dir)
+            try:
+                import torch  # noqa: F401
+            except Exception:
+                pass
+
     def _ensure_engine(self):
         if self.engine is not None:
             return
@@ -32,14 +75,16 @@ class DaemonServer:
         if project_root not in sys.path:
             sys.path.insert(0, project_root)
 
+        from xclaw.platform import PERCEPTION_CONFIG
         from xclaw.core.perception.pipeline_backend import PipelineBackend
         from xclaw.core.perception.engine import PerceptionEngine
 
-        backend = PipelineBackend()
+        backend = PipelineBackend(PERCEPTION_CONFIG)
         self.registry.register("pipeline", backend)
         self.registry.switch("pipeline")
 
-        self.engine = PerceptionEngine.get_instance()
+        self.engine = PerceptionEngine(backend=backend)
+        PerceptionEngine._instance = self.engine  # register as global singleton
         self.engine._ensure_models()
         print("[daemon] Models loaded. Ready.", flush=True)
 
@@ -87,12 +132,28 @@ class DaemonServer:
                 return result
             except KeyError as e:
                 return {"status": "error", "message": str(e)}
+        elif cmd == "schedule":
+            self._ensure_engine()
+            from xclaw.core.context.scheduler import schedule
+            sr = schedule(
+                action_result=request.get("action_result"),
+                force_level=request.get("force_level"),
+            )
+            return {
+                "perception": sr.perception,
+                "level": sr.level,
+                "diff_ratio": sr.diff_ratio,
+                "escalation_path": sr.escalation_path,
+                "elapsed_ms": sr.elapsed_ms,
+            }
         elif cmd == "backend-status":
             return self.registry.backend_status(request.get("name"))
         else:
             return {"status": "error", "message": f"Unknown command: {cmd}"}
 
     def run(self):
+        self._init_platform()
+
         PID_FILE.parent.mkdir(exist_ok=True)
         PID_FILE.write_text(str(os.getpid()))
 
@@ -167,12 +228,18 @@ class DaemonServer:
                     pipe,
                     json.dumps(response, ensure_ascii=False).encode("utf-8"),
                 )
+                win32file.FlushFileBuffers(pipe)
+                win32pipe.DisconnectNamedPipe(pipe)
             except Exception as e:
                 try:
                     win32file.WriteFile(
                         pipe,
                         json.dumps({"status": "error", "message": str(e)}).encode("utf-8"),
                     )
+                except Exception:
+                    pass
+                try:
+                    win32pipe.DisconnectNamedPipe(pipe)
                 except Exception:
                     pass
             finally:
