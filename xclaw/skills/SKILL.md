@@ -1,6 +1,6 @@
 ---
 name: xclaw
-description: "X-Claw visual agent skill. Observe the screen and perform mouse/keyboard operations. Commands: look, click, type, press, scroll, wait, stop (emergency only)."
+description: "X-Claw visual agent skill. Observe the screen and perform mouse/keyboard operations. Commands: look, click, type, press, scroll, wait, serve."
 allowed-tools: Bash(xclaw *), Read
 ---
 

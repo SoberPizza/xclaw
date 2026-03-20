@@ -88,7 +88,11 @@ def run(image_path: str | None = None, depth: str = "l2") -> None:
     # Resolve depth flags
     skip_l2 = depth == "l1"
 
+    debug_timing: dict[str, object] = {}
+    run_start = time.perf_counter_ns()
+
     # Screenshot
+    t = time.perf_counter_ns()
     if image_path is None:
         from xclaw.core.screen import take_screenshot
 
@@ -100,6 +104,7 @@ def run(image_path: str | None = None, depth: str = "l2") -> None:
         if not Path(image_path).exists():
             print(f"Error: image not found: {image_path}", file=sys.stderr)
             sys.exit(1)
+    debug_timing["screenshot_ms"] = (time.perf_counter_ns() - t) // 1_000_000
 
     # Prepare output directory
     if DEBUG_DIR.exists():
@@ -108,9 +113,21 @@ def run(image_path: str | None = None, depth: str = "l2") -> None:
 
     # Run pipeline
     print(f"Running pipeline (depth={depth})...")
+    t = time.perf_counter_ns()
     from xclaw.core.pipeline import run_pipeline
+    debug_timing["pipeline_import_ms"] = (time.perf_counter_ns() - t) // 1_000_000
 
+    t = time.perf_counter_ns()
     result = run_pipeline(image_path, skip_l2=skip_l2)
+    debug_timing["pipeline_run_ms"] = (time.perf_counter_ns() - t) // 1_000_000
+    debug_timing["pipeline_stages"] = result.timing
+
+    # Include model load timing breakdown if available
+    from xclaw.core.perception.engine import PerceptionEngine
+    engine = PerceptionEngine.get_instance()
+    backend = getattr(engine, "_backend", None)
+    if backend and hasattr(backend, "load_timing") and backend.load_timing:
+        debug_timing["model_load"] = dict(backend.load_timing)
 
     # Dump each layer
     summary: dict = {
@@ -125,6 +142,9 @@ def run(image_path: str | None = None, depth: str = "l2") -> None:
     if not skip_l2:
         print("  L2 spatial...")
         summary["l2"] = _dump_l2(result)
+
+    debug_timing["total_ms"] = (time.perf_counter_ns() - run_start) // 1_000_000
+    summary["debug_timing"] = debug_timing
 
     _write_json(DEBUG_DIR / "summary.json", summary)
 

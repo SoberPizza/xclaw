@@ -1,12 +1,13 @@
 """Perception engine — platform-adaptive orchestrator.
 
 Delegates to a :class:`PerceptionBackend` (default: ``PipelineBackend``
-which uses YOLO + PaddleOCR + MiniCPM-V 2.0).
+which uses YOLO + PaddleOCR + SigLIP 2 classifier).
 """
 
 import base64
 import io
 import logging
+import warnings
 from typing import Optional
 
 import numpy as np
@@ -55,16 +56,16 @@ class PerceptionEngine:
     def detect_text(self, image: np.ndarray, min_confidence: float = 0.6) -> list[TextBox]:
         return self._backend.detect_text(image, min_confidence)
 
-    def caption_icons(self, image: np.ndarray, icon_elements: list[dict]) -> list[str]:
-        return self._backend.caption_icons(image, icon_elements)
+    def classify_icons(self, image: np.ndarray, icon_elements: list[dict]) -> list[dict]:
+        return self._backend.classify_icons(image, icon_elements)
 
     @property
-    def caption_enabled(self) -> bool:
-        return self._backend.caption_enabled
+    def classify_enabled(self) -> bool:
+        return self._backend.classify_enabled
 
     @property
-    def caption_conditional(self) -> bool:
-        return self._backend.caption_conditional
+    def classify_conditional(self) -> bool:
+        return self._backend.classify_conditional
 
     # ── perception pipeline ──
 
@@ -73,15 +74,17 @@ class PerceptionEngine:
         region: Optional[list[int]] = None,
         with_image: bool = False,
     ) -> dict:
-        """Full perception pipeline:
+        """Full perception pipeline (DEPRECATED — use ``run_pipeline()`` instead).
 
-        1. Screenshot
-        2. YOLO detect interactive regions
-        3. PaddleOCR extract Chinese/English text
-        4. Spatial fusion + dedup
-        5. Conditional caption for text-less icons
-        6. Assign global IDs
+        .. deprecated::
+            Use :func:`xclaw.core.pipeline.run_pipeline` which provides
+            proper merge dedup and sub-stage timing.
         """
+        warnings.warn(
+            "PerceptionEngine.full_look() is deprecated, use xclaw.core.pipeline.run_pipeline() instead",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         import time
 
         self._backend.load_models()
@@ -112,22 +115,22 @@ class PerceptionEngine:
         t_ocr = time.time()
 
         # Step 4: Spatial fusion
-        merged, icons_needing_caption = fuse_results(icon_boxes, text_boxes)
+        merged, icons_needing_classify = fuse_results(icon_boxes, text_boxes)
         t_merge = time.time()
 
-        # Step 5: Conditional caption
+        # Step 5: Conditional classification
         try:
             if (
-                self._backend.caption_enabled
-                and icons_needing_caption
+                self._backend.classify_enabled
+                and icons_needing_classify
             ):
-                captions = self._backend.caption_icons(screenshot, icons_needing_caption)
-                for elem, cap in zip(icons_needing_caption, captions):
-                    elem["content"] = cap
+                results = self._backend.classify_icons(screenshot, icons_needing_classify)
+                for elem, r in zip(icons_needing_classify, results):
+                    elem["content"] = r["label"]
         except Exception as e:
-            logger.warning("Caption failed, continuing without captions: %s", e)
-            degraded.append("caption")
-        t_caption = time.time()
+            logger.warning("Classification failed, continuing without labels: %s", e)
+            degraded.append("classify")
+        t_classify = time.time()
 
         # Step 6: Assign sequential IDs
         for i, elem in enumerate(merged, start=1):
@@ -145,8 +148,8 @@ class PerceptionEngine:
                 "yolo_ms": round((t_yolo - t_capture) * 1000),
                 "ocr_ms": round((t_ocr - t_yolo) * 1000),
                 "merge_ms": round((t_merge - t_ocr) * 1000),
-                "caption_ms": round((t_caption - t_merge) * 1000),
-                "total_ms": round((t_caption - t_start) * 1000),
+                "classify_ms": round((t_classify - t_merge) * 1000),
+                "total_ms": round((t_classify - t_start) * 1000),
             },
         }
 

@@ -20,7 +20,7 @@ OMNIPARSER_FILES = [
     "icon_detect/train_args.yaml",
 ]
 
-MINICPM_REPO = "openbmb/MiniCPM-V-2"
+SIGLIP_REPO = "google/siglip2-base-patch16-224"
 
 
 class DownloadGUI:
@@ -67,7 +67,7 @@ class DownloadGUI:
 
     def _download_thread(self):
         try:
-            total_steps = len(OMNIPARSER_FILES) + 3  # +1 MiniCPM-V, +1 PaddleOCR, +1 init
+            total_steps = len(OMNIPARSER_FILES) + 2  # +1 SigLIP 2, +1 init
             step = 0
 
             self._ui(status="下载 OmniParser V2 …")
@@ -88,34 +88,21 @@ class DownloadGUI:
                     label=f,
                 )
 
-            # Download MiniCPM-V 2.0
+            # Download SigLIP 2
             step += 1
             self._ui(
-                status="下载 MiniCPM-V 2.0 …",
-                file="icon caption model",
+                status="下载 SigLIP 2 …",
+                file="icon classifier model",
                 progress=step / total_steps * 100,
             )
-            minicpm_dir = self.model_dir / "icon_caption_minicpm"
+            siglip_dir = self.model_dir / "icon_classify_siglip"
             self._download_with_retry(
                 [
                     sys.executable, "-m", "huggingface_hub", "download",
-                    MINICPM_REPO, "--local-dir", str(minicpm_dir),
+                    SIGLIP_REPO, "--local-dir", str(siglip_dir),
                 ],
-                label="MiniCPM-V-2",
+                label="SigLIP-2",
             )
-
-            # PaddleOCR
-            step += 1
-            self._ui(
-                status="初始化 PaddleOCR …",
-                file="首次运行自动下载模型",
-                progress=step / total_steps * 100,
-            )
-            try:
-                from paddleocr import PaddleOCR
-                PaddleOCR(use_angle_cls=True, lang="ch", use_gpu=False, show_log=False)
-            except Exception:
-                pass  # Non-fatal — PaddleOCR retries at runtime
 
             # Init
             step += 1

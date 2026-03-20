@@ -10,15 +10,12 @@ dependencies = [
     "torchvision>=0.20.0",
     "transformers>=4.40.0",
     "safetensors>=0.4.0",
-    "accelerate>=0.30.0",
-    "peft>=0.10.0",
     "sentencepiece>=0.1.99",
-    "einops>=0.8.0",
     "timm>=1.0.0",
     "supervision>=0.25.0",
     "onnxruntime>=1.17.0",
     "ultralytics>=8.1.0",
-    "paddleocr>=2.8.0",
+    "rapidocr-onnxruntime>=1.4.0",
 
     # ── 截屏 + 图像（跨平台） ──
     "mss>=9.0.0",
@@ -36,12 +33,10 @@ dependencies = [
 [project.optional-dependencies]
 win = [
     "onnxruntime-gpu>=1.17.0",
-    "paddlepaddle>=3.0.0",
     "pywin32>=306",
 ]
 mac = [
     "pyobjc-framework-Quartz>=10.0",
-    "paddlepaddle>=3.0.0",
 ]
 dev = [
     "pytest>=9.0.2",

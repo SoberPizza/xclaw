@@ -1,1 +1,1 @@
-"""L1 perception layer — YOLO detection + PaddleOCR + MiniCPM-V caption."""
+"""L1 perception layer — YOLO detection + RapidOCR + SigLIP 2 classification."""

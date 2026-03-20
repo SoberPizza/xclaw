@@ -36,12 +36,6 @@ WEIGHTS_DIR = PROJECT_ROOT / "weights"
 
 # ── OmniParser ──
 OMNIPARSER_DIR = PROJECT_ROOT / "OmniParser"
-OMNIPARSER_CONFIG = {
-    "som_model_path": str(WEIGHTS_DIR / "icon_detect" / "model.pt"),
-    "caption_model_name": "minicpm_v",
-    "caption_model_path": str(WEIGHTS_DIR / "icon_caption_minicpm"),
-    "BOX_TRESHOLD": 0.05,
-}
 
 # ── 行为人性化 ──
 HUMANIZE = os.environ.get("XCLAW_HUMANIZE", "0") == "1"
@@ -51,8 +45,13 @@ TYPE_DELAY_RANGE = (0.05, 0.15)
 
 # ── L1: Perception / Merger ──
 MERGER_IOU_THRESHOLD = 0.5
+MERGER_PROXIMITY_THRESHOLD = 16                  # bbox 边缘距离低于此值的图标跳过分类
 MERGER_SMALL_ELEMENT_SIZE = 32               # 双维低于此值的元素视为"小元素"
 MERGER_SMALL_ELEMENT_CENTER_DIST = 15        # 小元素去重：中心点距离阈值（px）
+
+# ── Classification ──
+CLASSIFY_CONFIDENCE_THRESHOLD = 0.20
+CLASSIFY_TOP2_GAP_THRESHOLD = 0.05
 
 # ── L2: Spatial Aggregation ──
 ROW_Y_TOLERANCE = 8
@@ -73,11 +72,6 @@ CONTEXT_GLANCE_FALLBACK_RATIO = 0.6         # glance 变化面积占比超此值
 CONTEXT_OVERLAP_DISCARD_THRESHOLD = 0.5     # glance 缓存元素重叠比超此值则丢弃
 CONTEXT_POST_ACTION_DELAY = 0.2              # 操作后截屏前等待秒数（等待视觉反馈）
 
-# ── Daemon: Tiered Idle Unloading ──
-DAEMON_IDLE_UNLOAD_CAPTION_S = 300           # 5min: 卸载 MiniCPM-V（最重、最少用）
-DAEMON_IDLE_UNLOAD_ALL_S = 900               # 15min: 卸载全部模型
-DAEMON_IDLE_EXIT_S = 1800                    # 30min: 退出进程
-
 # ── 平台适配 ──
 from xclaw.platform import PLATFORM, PERCEPTION_CONFIG  # noqa: E402
 
@@ -96,3 +90,11 @@ def _resolve_models_dir() -> Path:
 
 
 MODELS_DIR = _resolve_models_dir()
+
+# ── OmniParser config（依赖 MODELS_DIR，必须在其之后定义） ──
+OMNIPARSER_CONFIG = {
+    "som_model_path": str(MODELS_DIR / "icon_detect" / "model.pt"),
+    "classify_model_name": "siglip2",
+    "classify_model_path": str(MODELS_DIR / "icon_classify_siglip"),
+    "BOX_TRESHOLD": 0.05,
+}

@@ -1,4 +1,4 @@
-"""Default perception backend: YOLO + PaddleOCR + MiniCPM-V 2.0."""
+"""Default perception backend: YOLO + RapidOCR + SigLIP 2 classifier."""
 
 from __future__ import annotations
 
@@ -7,7 +7,6 @@ from pathlib import Path
 from typing import Optional
 
 import numpy as np
-import torch
 
 import logging
 
@@ -19,14 +18,15 @@ logger = logging.getLogger(__name__)
 
 
 class PipelineBackend:
-    """Default backend — YOLO icon detection + PaddleOCR + MiniCPM-V caption."""
+    """Default backend — YOLO icon detection + RapidOCR + SigLIP 2 classifier."""
 
     def __init__(self, config: PerceptionConfig):
         self._config = config
         self._models_loaded = False
         self._detector = None  # OmniDetector
         self._ocr = None       # OCREngine
-        self._caption = None   # MiniCPMCaption
+        self._classifier = None  # SigLIPClassifier
+        self.load_timing: dict[str, int] = {}  # per-model load times (ms)
 
     # ── PerceptionBackend protocol ──
 
@@ -34,10 +34,11 @@ class PipelineBackend:
         if self._models_loaded:
             return
 
-        t0 = time.time()
+        t_total = time.perf_counter_ns()
         model_dir = self._find_model_dir()
 
         # 1. YOLO icon_detect
+        t = time.perf_counter_ns()
         from xclaw.core.perception.omniparser import OmniDetector
 
         onnx_path = model_dir / "icon_detect" / "model.onnx"
@@ -58,41 +59,53 @@ class PipelineBackend:
                 f"No YOLO model found at {model_dir / 'icon_detect'}. "
                 "Run: uv run python scripts/download_models.py"
             )
+        self.load_timing["yolo_ms"] = (time.perf_counter_ns() - t) // 1_000_000
 
-        # 2. PaddleOCR
+        # 2. RapidOCR
+        t = time.perf_counter_ns()
         from xclaw.core.perception.ocr import OCREngine
 
         self._ocr = OCREngine(
             use_gpu=self._config.ocr_use_gpu,
             det_limit=self._config.ocr_det_limit,
         )
+        self.load_timing["ocr_ms"] = (time.perf_counter_ns() - t) // 1_000_000
 
-        # 3. MiniCPM-V (conditional)
-        if self._config.caption_enabled:
-            caption_dir = model_dir / "icon_caption_minicpm"
-            if caption_dir.exists():
+        # 3. SigLIP 2 classifier (conditional)
+        t = time.perf_counter_ns()
+        if self._config.classify_enabled:
+            classify_dir = model_dir / "icon_classify_siglip"
+            if classify_dir.exists():
                 try:
-                    from xclaw.core.perception.minicpm_caption import MiniCPMCaption
+                    from xclaw.core.perception.siglip_classifier import SigLIPClassifier
+
+                    import torch
 
                     dtype = (
                         torch.float16
-                        if self._config.caption_dtype == "float16"
+                        if self._config.classify_dtype == "float16"
                         else torch.float32
                     )
-                    self._caption = MiniCPMCaption(
-                        model_dir=caption_dir,
-                        device=self._config.caption_device,
+                    self._classifier = SigLIPClassifier(
+                        model_dir=classify_dir,
+                        device=self._config.classify_device,
                         dtype=dtype,
                     )
                 except Exception as e:
                     logger.warning(
-                        "MiniCPM-V caption load failed, continuing without captions: %s", e
+                        "SigLIP classifier load failed, continuing without classification: %s", e
                     )
-                    self._caption = None
+                    self._classifier = None
+        self.load_timing["siglip_ms"] = (time.perf_counter_ns() - t) // 1_000_000
 
         self._models_loaded = True
-        elapsed = time.time() - t0
-        logger.debug("Models loaded in %.1fs\n%s", elapsed, self._config.describe())
+        self.load_timing["total_ms"] = (time.perf_counter_ns() - t_total) // 1_000_000
+        logger.debug("Models loaded in %dms (yolo=%dms, ocr=%dms, siglip=%dms)\n%s",
+                      self.load_timing["total_ms"],
+                      self.load_timing["yolo_ms"],
+                      self.load_timing["ocr_ms"],
+                      self.load_timing["siglip_ms"],
+                      self._config.describe())
 
     def detect_icons(self, image: np.ndarray, conf: float = 0.3) -> list[dict]:
         self.load_models()
@@ -102,44 +115,50 @@ class PipelineBackend:
         self.load_models()
         return self._ocr.detect(image, min_confidence)
 
-    def caption_icons(
+    def classify_icons(
         self, image: np.ndarray, icon_elements: list[dict]
-    ) -> list[str]:
+    ) -> list[dict]:
         self.load_models()
-        if self._caption is None:
-            return ["" for _ in icon_elements]
-        return self._caption.batch_caption(image, icon_elements)
+        if self._classifier is None:
+            return [{"label": "", "confidence": 0.0} for _ in icon_elements]
+        return self._classifier.batch_classify(image, icon_elements)
 
     @property
-    def caption_enabled(self) -> bool:
-        return self._config.caption_enabled and self._caption is not None
+    def classify_enabled(self) -> bool:
+        return self._config.classify_enabled and self._classifier is not None
 
     @property
-    def caption_conditional(self) -> bool:
-        return self._config.caption_conditional
+    def classify_conditional(self) -> bool:
+        return self._config.classify_conditional
 
     # ── internals ──
 
-    def unload_caption(self) -> None:
-        """Release MiniCPM-V model from memory (heaviest, least used)."""
-        if self._caption is not None:
-            del self._caption
-            self._caption = None
+    def unload_classifier(self) -> None:
+        """Release SigLIP classifier from memory."""
+        if self._classifier is not None:
+            del self._classifier
+            self._classifier = None
             import gc
             gc.collect()
+            import torch
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
+            if hasattr(torch, "mps") and hasattr(torch.mps, "empty_cache"):
+                torch.mps.empty_cache()
 
     def unload_all(self) -> None:
         """Release all models from memory."""
-        self.unload_caption()
+        self.unload_classifier()
         self._detector = None
         self._ocr = None
         self._models_loaded = False
         import gc
         gc.collect()
+        import torch
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
+        if hasattr(torch, "mps") and hasattr(torch.mps, "empty_cache"):
+            torch.mps.empty_cache()
 
     @staticmethod
     def _find_model_dir() -> Path:

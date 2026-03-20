@@ -4,6 +4,7 @@ import math
 
 from xclaw.config import (
     MERGER_IOU_THRESHOLD,
+    MERGER_PROXIMITY_THRESHOLD,
     MERGER_SMALL_ELEMENT_CENTER_DIST,
     MERGER_SMALL_ELEMENT_SIZE,
 )
@@ -98,7 +99,8 @@ def merge_elements(
     for i, elem in enumerate(kept):
         content = elem.content
         if i in extra_content:
-            content = content + " " + " ".join(extra_content[i]) if content else " ".join(extra_content[i])
+            extra = " ".join(extra_content[i])
+            content = f"{content} {extra}".strip() if content else extra
         result.append(
             RawElement(
                 id=i,
@@ -118,12 +120,12 @@ def fuse_results(icon_boxes: list[dict], text_boxes) -> tuple[list[dict], list[d
     """Fuse YOLO icon detections and OCR text boxes.
 
     Returns:
-        (merged_elements, icons_needing_caption)
+        (merged_elements, icons_needing_classify)
         - merged_elements: all elements with type/bbox/content
-        - icons_needing_caption: icon elements without text overlap
+        - icons_needing_classify: icon elements without text overlap or proximity
     """
     merged = []
-    icons_needing_caption = []
+    icons_needing_classify = []
 
     # Convert text_boxes to dicts
     text_dicts = []
@@ -139,16 +141,23 @@ def fuse_results(icon_boxes: list[dict], text_boxes) -> tuple[list[dict], list[d
     for td in text_dicts:
         merged.append(td)
 
-    # Process icon boxes: check text overlap
+    # Process icon boxes: check text overlap and proximity
     for icon in icon_boxes:
         icon_bbox = icon["bbox"]
         has_text_overlap = False
+        has_text_nearby = False
 
         for td in text_dicts:
-            iou = box_iou(icon_bbox, td["bbox"])
+            tb = td["bbox"]
+            iou = box_iou(icon_bbox, tb)
             if iou > 0.3:
                 has_text_overlap = True
                 break
+            # proximity check (bbox edge-to-edge distance)
+            dx = max(0, max(tb[0] - icon_bbox[2], icon_bbox[0] - tb[2]))
+            dy = max(0, max(tb[1] - icon_bbox[3], icon_bbox[1] - tb[3]))
+            if dx < MERGER_PROXIMITY_THRESHOLD and dy < MERGER_PROXIMITY_THRESHOLD:
+                has_text_nearby = True
 
         elem = {
             "type": "icon",
@@ -158,7 +167,7 @@ def fuse_results(icon_boxes: list[dict], text_boxes) -> tuple[list[dict], list[d
         }
         merged.append(elem)
 
-        if not has_text_overlap:
-            icons_needing_caption.append(elem)
+        if not has_text_overlap and not has_text_nearby:
+            icons_needing_classify.append(elem)
 
-    return merged, icons_needing_caption
+    return merged, icons_needing_classify

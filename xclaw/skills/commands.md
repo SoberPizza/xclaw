@@ -21,13 +21,12 @@ Observe the screen. Takes a screenshot, diffs against previous state, and automa
     {"id": 0, "type": "text", "bbox": [10,20,200,40], "center": [105,30], "content": "File", "col": 0},
     {"id": 1, "type": "icon", "bbox": [210,20,240,40], "center": [225,30], "content": "menu icon", "col": 0}
   ],
-  "timing": {"l1_ms": 9800, "l2_ms": 1},
+  "timing": {"l1_ms": 800, "l2_ms": 1},
   "_meta": {
     "level": "L2",
-    "confidence": 1.0,
     "changed": true,
     "diff_ratio": 0.35,
-    "elapsed_ms": 9801
+    "elapsed_ms": 801
   }
 }
 ```
@@ -89,7 +88,6 @@ Every action command returns:
   },
   "_meta": {
     "level": "L2",
-    "confidence": 1.0,
     "changed": true,
     "diff_ratio": 0.08,
     "elapsed_ms": 400
@@ -102,7 +100,6 @@ Every action command returns:
 | Field | Description |
 |-------|-------------|
 | `level` | Perception level used: L0 (cache), L1 (pixel-diff), L2 (full parse) |
-| `confidence` | Cache confidence (0-1) |
 | `changed` | Whether the screen changed since last observation |
 | `diff_ratio` | Ratio of changed pixels (0-1) |
 | `elapsed_ms` | Perception time in milliseconds |
@@ -114,12 +111,22 @@ Every action command returns:
 - Critical keys like `enter`/`f5` → Force L2
 - Any level error → Auto-escalate to next level
 
-## Emergency Commands
+## Server Command
 
-### `xclaw stop`
+### `xclaw serve`
 
-**Emergency only.** Force-kill the perception daemon when it is stuck or crashed. Do NOT use this during normal operation — the daemon exits automatically after 300 seconds of idle time.
+Start a long-running stdio JSON-line server. Models are loaded once at startup and kept in memory.
 
-```json
-{"status": "stopped"}
+**Protocol:**
+
 ```
+← {"status": "ready", "version": "0.5.0"}     # startup complete
+→ {"command": "look"}                           # perception
+← {"status": "ok", "elements": [...], "_meta": {...}}
+→ {"command": "click", "x": 100, "y": 200}     # action + perception
+← {"status": "ok", "action": {...}, "perception": {...}}
+```
+
+**Supported commands:** `look`, `click`, `type`, `press`, `scroll`, `wait`
+
+Exit by closing stdin or killing the process. Single-threaded, synchronous, one request at a time.

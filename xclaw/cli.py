@@ -9,11 +9,15 @@ def _output(data: dict):
     click.echo(json.dumps(data, ensure_ascii=True))
 
 
-def _extract_ts(image_path: str) -> int | None:
-    """Extract millisecond timestamp from 'screen_1234567890123.png'."""
-    import re
-    m = re.search(r"screen_(\d+)\.", image_path)
-    return int(m.group(1)) if m else None
+def _cleanup_logs(keep: int = 50) -> None:
+    """Remove old log files, keeping the most recent *keep* entries."""
+    from xclaw.config import LOGS_DIR
+    try:
+        files = sorted(LOGS_DIR.glob("screen_*.json"))
+        for f in files[:-keep]:
+            f.unlink(missing_ok=True)
+    except OSError:
+        pass
 
 
 def _save_to_logs(result_dict: dict, *, prefix: str = "screen", timestamp: int | None = None) -> str | None:
@@ -21,7 +25,7 @@ def _save_to_logs(result_dict: dict, *, prefix: str = "screen", timestamp: int |
     from xclaw.config import LOGS_DIR
     try:
         LOGS_DIR.mkdir(exist_ok=True)
-        if timestamp is None:
+        if not timestamp:
             timestamp = int(time.time() * 1000)
         log_file = LOGS_DIR / f"{prefix}_{timestamp}.json"
         with open(log_file, "w", encoding="utf-8") as f:
@@ -29,32 +33,32 @@ def _save_to_logs(result_dict: dict, *, prefix: str = "screen", timestamp: int |
         latest_file = LOGS_DIR / f"{prefix}.json"
         with open(latest_file, "w", encoding="utf-8") as f:
             json.dump(result_dict, f, ensure_ascii=False, indent=2)
+        _cleanup_logs()
         return str(log_file)
     except Exception as exc:
         click.echo(f"Warning: failed to save log: {exc}", err=True)
         return None
 
 
-def _action_with_look(action_result: dict) -> dict:
-    """Run the smart perception scheduler (via daemon) after an action and return combined result."""
-    from xclaw.core.daemon import request_perception
+def _action_with_look(action_result: dict) -> tuple[dict, dict]:
+    """Run the smart perception scheduler after an action and return (result, timing)."""
+    from xclaw.core.context.scheduler import schedule
 
-    resp = request_perception({
-        "command": "schedule",
-        "action_result": action_result,
-    })
-    perception = resp.get("perception", resp)
+    sr = schedule(action_result=action_result)
+    perception = sr.perception
     meta = perception.pop("_perception", {})
-    return {
+    result = {
         "action": action_result,
         "perception": perception,
         "_meta": {
-            "level": resp.get("level", meta.get("level")),
-            "diff_ratio": resp.get("diff_ratio", meta.get("diff_ratio")),
+            "level": sr.level,
+            "diff_ratio": sr.diff_ratio,
             "changed": meta.get("changed"),
-            "elapsed_ms": resp.get("elapsed_ms", meta.get("elapsed_ms")),
+            "elapsed_ms": sr.elapsed_ms,
         },
     }
+    _save_to_logs(result, timestamp=sr.timestamp)
+    return result, sr.timing
 
 
 def _ensure_cuda_dll_dirs():
@@ -103,28 +107,10 @@ def _silence_for_cli():
     # Python warnings → off
     warnings.filterwarnings("ignore")
 
-    # Disable ANSI color codes from colorlog (used by PaddleX)
-    os.environ["NO_COLOR"] = "1"
-
     # Third-party env vars
+    os.environ["NO_COLOR"] = "1"
     os.environ["TRANSFORMERS_VERBOSITY"] = "error"
     os.environ["YOLO_VERBOSE"] = "False"
-
-    # PaddlePaddle GLOG (C++ layer) — 2=ERROR, suppresses INFO+WARNING
-    os.environ["GLOG_minloglevel"] = "2"
-
-    # PaddleX: skip connectivity check + disable oneDNN (PIR+oneDNN bug on Win CPU)
-    os.environ["PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK"] = "1"
-    os.environ["PADDLE_PDX_ENABLE_MKLDNN_BYDEFAULT"] = "0"
-
-    # Pre-configure paddlex logger BEFORE paddlex is imported.
-    # PaddleX's setup_logging() checks hasHandlers() — pre-adding NullHandler
-    # prevents it from registering its colorlog StreamHandler.
-    for name in ("paddlex", "paddlex.inference", "paddlex.utils"):
-        lg = logging.getLogger(name)
-        lg.addHandler(logging.NullHandler())
-        lg.setLevel(logging.CRITICAL)
-        lg.propagate = False
 
     # ONNX Runtime (C++ layer) — 3=Error
     os.environ["ORT_LOG_LEVEL"] = "3"
@@ -134,9 +120,33 @@ def _silence_for_cli():
     os.environ["TRANSFORMERS_NO_ADVISORY_WARNINGS"] = "1"
 
 
+def _print_timing(timing: dict, cli_start_ns: int) -> None:
+    """Print timing breakdown to stderr (does not pollute stdout JSON)."""
+    total_ms = (time.perf_counter_ns() - cli_start_ns) // 1_000_000
+    click.echo(f"\n--- Timing (total {total_ms}ms) ---", err=True)
+    _print_timing_dict(timing, indent=0)
+    click.echo(f"cli_total_ms: {total_ms}", err=True)
+
+
+def _print_timing_dict(d: dict, indent: int = 0) -> None:
+    """Recursively print timing dict with indentation."""
+    prefix = "  " * indent
+    for key, value in d.items():
+        if isinstance(value, dict):
+            click.echo(f"{prefix}{key}:", err=True)
+            _print_timing_dict(value, indent + 1)
+        else:
+            click.echo(f"{prefix}{key}: {value}", err=True)
+
+
 @click.group()
-def main():
+@click.option("--timing", "show_timing", is_flag=True, help="Print timing breakdown to stderr")
+@click.pass_context
+def main(ctx, show_timing):
     """X-Claw Visual Agent CLI"""
+    ctx.ensure_object(dict)
+    ctx.obj["show_timing"] = show_timing
+    ctx.obj["cli_start_ns"] = time.perf_counter_ns()
     _silence_for_cli()
     _ensure_cuda_dll_dirs()
 
@@ -145,24 +155,27 @@ def main():
 
 
 @main.command()
-def look():
+@click.pass_context
+def look(ctx):
     """Observe the screen."""
-    from xclaw.core.daemon import request_perception
+    from xclaw.core.context.scheduler import schedule
 
-    resp = request_perception({"command": "schedule"})
-    perception = resp.get("perception", resp)
+    sr = schedule()
+    perception = sr.perception
     meta = perception.pop("_perception", {})
     result = {
         **perception,
         "_meta": {
-            "level": resp.get("level", meta.get("level")),
-            "diff_ratio": resp.get("diff_ratio", meta.get("diff_ratio")),
+            "level": sr.level,
+            "diff_ratio": sr.diff_ratio,
             "changed": meta.get("changed"),
-            "elapsed_ms": resp.get("elapsed_ms", meta.get("elapsed_ms")),
+            "elapsed_ms": sr.elapsed_ms,
         },
     }
-    _save_to_logs(result)
+    _save_to_logs(result, timestamp=sr.timestamp)
     _output(result)
+    if ctx.obj.get("show_timing"):
+        _print_timing(sr.timing, ctx.obj["cli_start_ns"])
 
 
 # ── Actions ───────────────────────────────────────────────────────
@@ -172,32 +185,41 @@ def look():
 @click.argument("x", type=int)
 @click.argument("y", type=int)
 @click.option("--double", is_flag=True, help="Double-click")
-def click_cmd(x, y, double):
+@click.pass_context
+def click_cmd(ctx, x, y, double):
     """Click at screen coordinates."""
     from xclaw.action.mouse import click as do_click
 
-    result = do_click(x, y, double=double)
-    _output(_action_with_look(result))
+    result, sched_timing = _action_with_look(do_click(x, y, double=double))
+    _output(result)
+    if ctx.obj.get("show_timing"):
+        _print_timing(sched_timing, ctx.obj["cli_start_ns"])
 
 
 @main.command("type")
 @click.argument("text")
-def type_cmd(text):
+@click.pass_context
+def type_cmd(ctx, text):
     """Type text at the cursor."""
     from xclaw.action.keyboard import type_text
 
-    result = type_text(text)
-    _output(_action_with_look(result))
+    result, sched_timing = _action_with_look(type_text(text))
+    _output(result)
+    if ctx.obj.get("show_timing"):
+        _print_timing(sched_timing, ctx.obj["cli_start_ns"])
 
 
 @main.command()
 @click.argument("key")
-def press(key):
+@click.pass_context
+def press(ctx, key):
     """Press a key (enter, tab, escape, ...)."""
     from xclaw.action.keyboard import press_key
 
-    result = press_key(key)
-    _output(_action_with_look(result))
+    result, sched_timing = _action_with_look(press_key(key))
+    _output(result)
+    if ctx.obj.get("show_timing"):
+        _print_timing(sched_timing, ctx.obj["cli_start_ns"])
 
 
 @main.command()
@@ -205,42 +227,39 @@ def press(key):
 @click.argument("amount", type=int)
 @click.option("--x", type=int, default=None, help="X coordinate (default: screen center)")
 @click.option("--y", type=int, default=None, help="Y coordinate (default: screen center)")
-def scroll(direction, amount, x, y):
+@click.pass_context
+def scroll(ctx, direction, amount, x, y):
     """Scroll up or down."""
     from xclaw.action.mouse import scroll as do_scroll
 
-    result = do_scroll(direction, amount, x, y)
-    _output(_action_with_look(result))
+    result, sched_timing = _action_with_look(do_scroll(direction, amount, x, y))
+    _output(result)
+    if ctx.obj.get("show_timing"):
+        _print_timing(sched_timing, ctx.obj["cli_start_ns"])
 
 
 @main.command()
 @click.argument("seconds", type=float)
-def wait(seconds):
+@click.pass_context
+def wait(ctx, seconds):
     """Wait for a number of seconds."""
     time.sleep(seconds)
-    result = {"status": "ok", "action": "wait", "seconds": seconds}
-    _output(_action_with_look(result))
+    action_result = {"status": "ok", "action": "wait", "seconds": seconds}
+    result, sched_timing = _action_with_look(action_result)
+    _output(result)
+    if ctx.obj.get("show_timing"):
+        _print_timing(sched_timing, ctx.obj["cli_start_ns"])
 
 
-# ── Emergency ─────────────────────────────────────────────────────
+# ── Server ───────────────────────────────────────────────────────
 
 
 @main.command()
-def stop():
-    """Emergency stop: kill the perception daemon.
-
-    Use ONLY when the daemon is stuck or crashed. Under normal operation
-    the daemon exits automatically after 300 seconds of idle time.
-    """
-    from xclaw.core.daemon import is_daemon_alive, request_perception
-    if is_daemon_alive():
-        try:
-            request_perception({"command": "shutdown"})
-        except Exception:
-            pass
-        _output({"status": "stopped"})
-    else:
-        _output({"status": "not_running"})
+@click.pass_context
+def serve(ctx):
+    """Start long-running stdio server."""
+    from xclaw.serve import run_serve
+    run_serve()
 
 
 if __name__ == "__main__":

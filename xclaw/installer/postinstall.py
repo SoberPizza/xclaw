@@ -66,7 +66,7 @@ def run_postinstall() -> int:
 def _models_present(model_dir: Path) -> bool:
     return (
         (model_dir / "icon_detect" / "model.pt").exists()
-        and (model_dir / "icon_caption_minicpm" / "config.json").exists()
+        and (model_dir / "icon_classify_siglip" / "config.json").exists()
     )
 
 
@@ -77,9 +77,8 @@ def _cli_download(model_dir: Path) -> bool:
         scripts_dir = str(Path(__file__).resolve().parents[2] / "scripts")
         if scripts_dir not in sys.path:
             sys.path.insert(0, scripts_dir)
-        from download_models import download_omniparser, init_paddleocr
+        from download_models import download_omniparser
         download_omniparser(model_dir)
-        init_paddleocr()
         return _models_present(model_dir)
     except Exception as exc:
         print(f"[setup] CLI download error: {exc}")

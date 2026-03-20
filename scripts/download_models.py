@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """X-Claw cross-platform model downloader.
 
-Total download: ~1.3 GB
+Total download: ~1.5 GB (YOLO ~40MB + SigLIP 2 ~1.4GB + PaddleOCR auto-download)
 
 macOS: uv run --extra mac python scripts/download_models.py
 Win:   uv run --extra win python scripts/download_models.py
@@ -25,7 +25,7 @@ OMNIPARSER_FILES = [
     "icon_detect/train_args.yaml",
 ]
 
-MINICPM_REPO = "openbmb/MiniCPM-V-2"
+SIGLIP_REPO = "google/siglip2-base-patch16-224"
 
 # SHA256 prefix manifest — warn-only, does not block loading.
 # Compute with: python -c "import hashlib; print(hashlib.sha256(open(f,'rb').read()).hexdigest()[:16])"
@@ -33,7 +33,7 @@ MINICPM_REPO = "openbmb/MiniCPM-V-2"
 MODEL_MANIFEST: dict[str, dict] = {
     "icon_detect/model.pt": {"min_size_mb": 20},
     "icon_detect/model.yaml": {"min_size_mb": 0.001},
-    "icon_caption_minicpm/config.json": {"min_size_mb": 0.001},
+    "icon_classify_siglip/config.json": {"min_size_mb": 0.0001},
 }
 
 
@@ -68,7 +68,7 @@ def _download_with_retry(
 
 
 def download_omniparser(dest_dir: Path, progress_callback=None) -> bool:
-    """Download OmniParser V2 models + MiniCPM-V to *dest_dir*.
+    """Download OmniParser V2 models + SigLIP 2 to *dest_dir*.
 
     *progress_callback*, if provided, is called as ``cb(file_index, total, filename)``
     before each file download starts.
@@ -76,7 +76,7 @@ def download_omniparser(dest_dir: Path, progress_callback=None) -> bool:
     Returns True on success.
     """
     dest_dir.mkdir(parents=True, exist_ok=True)
-    total = len(OMNIPARSER_FILES) + 1  # +1 for MiniCPM-V
+    total = len(OMNIPARSER_FILES) + 1  # +1 for SigLIP 2
 
     for idx, f in enumerate(OMNIPARSER_FILES):
         if progress_callback:
@@ -91,19 +91,19 @@ def download_omniparser(dest_dir: Path, progress_callback=None) -> bool:
             label=f,
         )
 
-    # Download MiniCPM-V 2.0
+    # Download SigLIP 2 B/16
     idx = len(OMNIPARSER_FILES)
     if progress_callback:
-        progress_callback(idx, total, "MiniCPM-V-2")
+        progress_callback(idx, total, "SigLIP-2")
     else:
-        print(f"  ↓ MiniCPM-V-2 (icon caption)")
+        print(f"  ↓ SigLIP 2 B/16 (icon classifier)")
 
-    minicpm_dir = dest_dir / "icon_caption_minicpm"
+    siglip_dir = dest_dir / "icon_classify_siglip"
     _download_with_retry(
         lambda: snapshot_download(
-            MINICPM_REPO, local_dir=str(minicpm_dir),
+            SIGLIP_REPO, local_dir=str(siglip_dir),
         ),
-        label="MiniCPM-V-2",
+        label="SigLIP-2",
     )
 
     if progress_callback:
@@ -174,7 +174,7 @@ def verify_models(model_dir: Path) -> bool:
     checks = {
         "YOLO": model_dir / "icon_detect" / "model.pt",
         "YOLO ONNX": model_dir / "icon_detect" / "model.onnx",
-        "MiniCPM-V": model_dir / "icon_caption_minicpm" / "config.json",
+        "SigLIP 2": model_dir / "icon_classify_siglip" / "config.json",
     }
     all_ok = True
     for name, path in checks.items():
@@ -216,20 +216,15 @@ def main():
     print(f"  Target:   {MODELS}")
     print("=" * 60)
 
-    # 1. OmniParser V2
-    print(f"\n📦 OmniParser V2 (~1.12 GB)")
+    # 1. OmniParser V2 + SigLIP 2
+    print(f"\n📦 OmniParser V2 + SigLIP 2 (~1.5 GB)")
     download_omniparser(MODELS)
 
     # 2. YOLO ONNX export
     print("\n📦 YOLO ONNX export (recommended backend)")
     export_yolo_onnx(MODELS)
 
-    # 3. PaddleOCR
-    print("\n📦 PaddleOCR v4 (auto-download on first use)")
-    if init_paddleocr():
-        print("  ✅ PaddleOCR ready")
-
-    # 4. Verify
+    # 3. Verify
     print("\n🔍 Verification:")
     if verify_models(MODELS):
         print("\n✅ All models ready!")

@@ -1,4 +1,4 @@
-"""PerceptionBackend protocol — abstracts detection, OCR, and captioning."""
+"""PerceptionBackend protocol — abstracts detection, OCR, and classification."""
 
 from __future__ import annotations
 
@@ -14,7 +14,7 @@ class PerceptionBackend(Protocol):
     """Contract that any perception backend must satisfy.
 
     Three granular methods (not a single ``perceive()``) because some
-    callers (e.g. glance) need only detection + OCR without caption.
+    callers (e.g. glance) need only detection + OCR without classification.
     """
 
     def load_models(self) -> None:
@@ -35,26 +35,26 @@ class PerceptionBackend(Protocol):
         """
         ...
 
-    def caption_icons(
+    def classify_icons(
         self, image: np.ndarray, icon_elements: list[dict]
-    ) -> list[str]:
-        """Generate short descriptions for icon regions.
+    ) -> list[dict]:
+        """Classify icon regions via zero-shot similarity.
 
         Args:
             image: Full screenshot as numpy array.
-            icon_elements: Elements needing caption (must have ``bbox`` key).
+            icon_elements: Elements needing classification (must have ``bbox`` key).
 
         Returns:
-            One description string per element.
+            One ``{"label": str, "confidence": float}`` dict per element.
         """
         ...
 
     @property
-    def caption_enabled(self) -> bool:
-        """Whether the caption model is available and configured."""
+    def classify_enabled(self) -> bool:
+        """Whether the classification model is available and configured."""
         ...
 
     @property
-    def caption_conditional(self) -> bool:
-        """Whether caption should only run for icons without text overlay."""
+    def classify_conditional(self) -> bool:
+        """Whether classification should only run for icons without text overlay."""
         ...

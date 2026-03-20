@@ -106,33 +106,60 @@ def run_pipeline(
     timing: dict[str, int] = {}
 
     # ── L1: Perception ──
-    t0 = time.perf_counter_ns()
+    l1_start = time.perf_counter_ns()
 
-    from xclaw.core.perception.engine import PerceptionEngine
-
-    engine = PerceptionEngine.get_instance()
-
-    # Use the engine's full_look which handles YOLO + OCR + Florence-2
+    # Image load
+    t = time.perf_counter_ns()
     import numpy as np
     from PIL import Image
 
     img = Image.open(image_path)
     w, h = img.size
     screenshot = np.array(img)
+    timing["image_load_ms"] = (time.perf_counter_ns() - t) // 1_000_000
 
-    # Run detection + OCR + fusion
+    # Engine init (lazy model load)
+    t = time.perf_counter_ns()
+    from xclaw.core.perception.engine import PerceptionEngine
+
+    engine = PerceptionEngine.get_instance()
+    engine._ensure_models()
+    timing["engine_init_ms"] = (time.perf_counter_ns() - t) // 1_000_000
+    backend = getattr(engine, "_backend", None)
+    if backend and hasattr(backend, "load_timing") and backend.load_timing:
+        timing["model_load"] = dict(backend.load_timing)
+
+    # YOLO icon detection
+    t = time.perf_counter_ns()
     icon_boxes = engine.detect_icons(screenshot)
-    text_boxes = engine.detect_text(screenshot)
+    timing["yolo_ms"] = (time.perf_counter_ns() - t) // 1_000_000
 
+    # OCR text detection
+    t = time.perf_counter_ns()
+    text_boxes = engine.detect_text(screenshot)
+    timing["ocr_ms"] = (time.perf_counter_ns() - t) // 1_000_000
+
+    # Spatial fusion
+    t = time.perf_counter_ns()
     from xclaw.core.perception.merger import fuse_results, merge_elements
 
-    fused, icons_needing_caption = fuse_results(icon_boxes, text_boxes)
+    fused, icons_needing_classify = fuse_results(icon_boxes, text_boxes)
+    timing["fuse_ms"] = (time.perf_counter_ns() - t) // 1_000_000
 
-    # Conditional caption for text-less icons
-    if engine.caption_enabled and icons_needing_caption:
-        captions = engine.caption_icons(screenshot, icons_needing_caption)
-        for elem, cap in zip(icons_needing_caption, captions):
-            elem["content"] = cap
+    # Conditional classification for text-less icons (SigLIP 2)
+    t = time.perf_counter_ns()
+    classify_count = 0
+    if engine.classify_enabled and icons_needing_classify:
+        from xclaw.config import CLASSIFY_CONFIDENCE_THRESHOLD, CLASSIFY_TOP2_GAP_THRESHOLD
+
+        results = engine.classify_icons(screenshot, icons_needing_classify)
+        classify_count = len(icons_needing_classify)
+        for elem, r in zip(icons_needing_classify, results):
+            if (r["confidence"] >= CLASSIFY_CONFIDENCE_THRESHOLD
+                    and r.get("gap", 1.0) >= CLASSIFY_TOP2_GAP_THRESHOLD):
+                elem["content"] = r["label"]
+    timing["classify_ms"] = (time.perf_counter_ns() - t) // 1_000_000
+    timing["classify_count"] = classify_count
 
     # Convert fused dicts to RawElement
     elements = []
@@ -151,11 +178,12 @@ def run_pipeline(
             confidence=elem.get("confidence", 1.0),
         ))
 
-    # Apply merge dedup
+    # Merge dedup
+    t = time.perf_counter_ns()
     elements = merge_elements(elements)
+    timing["merge_ms"] = (time.perf_counter_ns() - t) // 1_000_000
 
-
-    timing["l1_ms"] = (time.perf_counter_ns() - t0) // 1_000_000
+    timing["l1_ms"] = (time.perf_counter_ns() - l1_start) // 1_000_000
 
     if skip_l2:
         return PipelineResult(

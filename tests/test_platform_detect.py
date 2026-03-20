@@ -166,16 +166,16 @@ class TestPerceptionConfig:
         cfg = PerceptionConfig(
             yolo_device="mps",
             yolo_onnx_ep="CoreMLExecutionProvider",
-            caption_device="cpu",
-            caption_dtype="float32",
-            caption_enabled=True,
-            caption_conditional=True,
+            classify_device="mps",
+            classify_dtype="float32",
+            classify_enabled=True,
+            classify_conditional=True,
             ocr_use_gpu=False,
             ocr_det_limit=960,
         )
         desc = cfg.describe()
         assert "YOLO" in desc
-        assert "Caption" in desc
+        assert "Classify" in desc
         assert "OCR" in desc
         assert "CoreMLExecutionProvider" in desc
 
@@ -186,50 +186,46 @@ class TestPerceptionConfig:
 
 
 class TestBuildPerceptionConfig:
-    @patch("xclaw.platform.gpu.detect_platform")
-    def test_windows_cuda(self, mock_detect):
-        mock_detect.return_value = PlatformInfo(
+    def test_windows_cuda(self):
+        plat = PlatformInfo(
             system="Windows", arch="AMD64",
             is_apple_silicon=False, memory_gb=32, gpu_backend="cuda",
         )
-        cfg = build_perception_config()
+        cfg = build_perception_config(plat)
         assert cfg.yolo_device == "cuda"
         assert cfg.yolo_onnx_ep == "CUDAExecutionProvider"
-        assert cfg.caption_device == "cuda"
-        assert cfg.caption_dtype == "float16"
+        assert cfg.classify_device == "cuda"
+        assert cfg.classify_dtype == "float16"
         assert cfg.ocr_use_gpu is False
 
-    @patch("xclaw.platform.gpu.detect_platform")
-    def test_macos_apple_silicon(self, mock_detect):
-        mock_detect.return_value = PlatformInfo(
+    def test_macos_apple_silicon(self):
+        plat = PlatformInfo(
             system="Darwin", arch="arm64",
             is_apple_silicon=True, memory_gb=16, gpu_backend="mps",
         )
-        cfg = build_perception_config()
+        cfg = build_perception_config(plat)
         assert cfg.yolo_device == "mps"
         assert cfg.yolo_onnx_ep == "CoreMLExecutionProvider"
-        assert cfg.caption_device == "cpu"
-        assert cfg.caption_dtype == "float32"
+        assert cfg.classify_device == "mps"
+        assert cfg.classify_dtype == "float32"
         assert cfg.ocr_use_gpu is False
 
-    @patch("xclaw.platform.gpu.detect_platform")
-    def test_cpu_fallback(self, mock_detect):
-        mock_detect.return_value = PlatformInfo(
+    def test_cpu_fallback(self):
+        plat = PlatformInfo(
             system="Linux", arch="x86_64",
             is_apple_silicon=False, memory_gb=32, gpu_backend="cpu",
         )
-        cfg = build_perception_config()
+        cfg = build_perception_config(plat)
         assert cfg.yolo_device == "cpu"
         assert cfg.yolo_onnx_ep == "CPUExecutionProvider"
-        assert cfg.caption_device == "cpu"
-        assert cfg.caption_dtype == "float32"
+        assert cfg.classify_device == "cpu"
+        assert cfg.classify_dtype == "float32"
         assert cfg.ocr_det_limit == 640
 
-    @patch("xclaw.platform.gpu.detect_platform")
-    def test_unsupported_raises(self, mock_detect):
-        mock_detect.return_value = PlatformInfo(
+    def test_unsupported_raises(self):
+        plat = PlatformInfo(
             system="Darwin", arch="arm64",
             is_apple_silicon=True, memory_gb=8, gpu_backend="mps",
         )
         with pytest.raises(SystemError, match="16GB"):
-            build_perception_config()
+            build_perception_config(plat)
