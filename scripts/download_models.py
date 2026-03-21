@@ -33,7 +33,7 @@ SIGLIP_REPO = "google/siglip2-base-patch16-224"
 MODEL_MANIFEST: dict[str, dict] = {
     "icon_detect/model.pt": {"min_size_mb": 20},
     "icon_detect/model.yaml": {"min_size_mb": 0.001},
-    "icon_classify_siglip/config.json": {"min_size_mb": 0.0001},
+    "icon_classify_siglip/model.safetensors": {"min_size_mb": 500},
 }
 
 
@@ -174,7 +174,7 @@ def verify_models(model_dir: Path) -> bool:
     checks = {
         "YOLO": model_dir / "icon_detect" / "model.pt",
         "YOLO ONNX": model_dir / "icon_detect" / "model.onnx",
-        "SigLIP 2": model_dir / "icon_classify_siglip" / "config.json",
+        "SigLIP 2": model_dir / "icon_classify_siglip" / "model.safetensors",
     }
     all_ok = True
     for name, path in checks.items():

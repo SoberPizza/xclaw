@@ -291,9 +291,9 @@ class TestModelVerification:
 
         classify_dir = tmp_path / "icon_classify_siglip"
         classify_dir.mkdir()
-        config_file = classify_dir / "config.json"
-        # Must be >= 0.001 MB (~1KB) per MODEL_MANIFEST
-        config_file.write_text('{"model_type": "siglip2"}' + " " * 1100)
+        safetensors_file = classify_dir / "model.safetensors"
+        # Must be >= 500 MB per MODEL_MANIFEST
+        safetensors_file.write_bytes(b"x" * (501 * 1024 * 1024))
 
         result = verify_models(tmp_path)
         assert result is True

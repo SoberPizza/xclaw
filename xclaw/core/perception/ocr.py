@@ -26,6 +26,7 @@ class OCREngine:
             "inter_op_num_threads": 4,
             "max_side_len": det_limit,
             "text_score": 0.5,
+            "use_cls": False,
         }
 
         # Custom model paths (if provided)
