@@ -38,11 +38,19 @@ def click_cmd(x, y, double, button):
 
 
 @click.command("type")
-@click.argument("text")
+@click.argument("text", default="")
 def type_cmd(text):
-    """Type text at the cursor."""
+    """Type text at the cursor.
+
+    Reads from stdin (UTF-8) when piped, otherwise uses the TEXT argument.
+    """
+    import sys
     from xclaw.action.keyboard import type_text
 
+    if not sys.stdin.isatty():
+        text = sys.stdin.buffer.read().decode("utf-8")
+    if not text:
+        raise click.UsageError("No text provided. Pass TEXT argument or pipe via stdin.")
     result = type_text(text)
     output(_action_with_look(result))
 

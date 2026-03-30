@@ -85,9 +85,32 @@ class NativeActionBackend:
 
     def type_text(self, text: str) -> dict:
         self._ensure_platform()
-        for char in text:
-            self._humanize.type_char_delay()
-            self._keyboard.type_text(char)
+        segments = self._keyboard._split_text(text)
+
+        # Check IME state once before typing
+        has_ascii = any(k == "ascii" for k, _ in segments)
+        ime_toggled = False
+        if has_ascii and self._keyboard._is_ime_chinese_mode():
+            self._keyboard._toggle_ime_to_english()
+            ime_toggled = True
+
+        for kind, segment in segments:
+            if kind == "ascii":
+                for char in segment:
+                    self._humanize.type_char_delay()
+                    self._keyboard.type_char_vk(char)
+            elif kind == "non_ascii":
+                self._humanize.type_char_delay()
+                self._keyboard.clipboard_paste(segment)
+            elif kind == "control":
+                for char in segment:
+                    self._humanize.type_char_delay()
+                    self._keyboard.type_text(char)
+
+        # Restore IME to Chinese mode if we toggled it
+        if ime_toggled:
+            self._keyboard._toggle_ime_to_english()
+
         return {"status": "ok", "action": "type", "text": text}
 
     def press_key(self, key: str) -> dict:

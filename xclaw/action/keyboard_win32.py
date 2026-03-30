@@ -1,15 +1,34 @@
-"""Windows keyboard control via ctypes SendInput."""
+"""Windows keyboard control via ctypes SendInput.
+
+Three input paths:
+  A) VK physical key simulation for ASCII characters (with IME detection)
+  B) Clipboard paste for non-ASCII characters (Chinese, emoji, kaomoji)
+  C) KEYEVENTF_UNICODE as internal fallback (supports surrogate pairs)
+"""
 
 import ctypes
+import ctypes.wintypes
 import time
 import random
+import logging
+
+logger = logging.getLogger(__name__)
 
 user32 = ctypes.windll.user32
+kernel32 = ctypes.windll.kernel32
+imm32 = ctypes.windll.imm32
 
 # SendInput constants
 INPUT_KEYBOARD = 1
 KEYEVENTF_KEYUP = 0x0002
 KEYEVENTF_UNICODE = 0x0004
+
+# Clipboard constants
+CF_UNICODETEXT = 13
+GMEM_MOVEABLE = 0x0002
+
+# IME conversion mode flag
+IME_CMODE_ALPHANUMERIC = 0x0000
 
 # Windows Virtual Key codes
 WIN_VK = {
@@ -43,6 +62,9 @@ WIN_MOD_VK = {
     "win": 0x5B,
 }
 
+VK_SHIFT = 0x10
+VK_CONTROL = 0x11
+
 
 class KEYBDINPUT(ctypes.Structure):
     _fields_ = [
@@ -72,6 +94,9 @@ class INPUT(ctypes.Structure):
     ]
 
 
+# ── Low-level SendInput helpers ──
+
+
 def _send_key(vk: int = 0, scan: int = 0, flags: int = 0):
     inp = INPUT()
     inp.type = INPUT_KEYBOARD
@@ -89,30 +114,247 @@ def _press_release_vk(vk: int):
     _send_key(vk=vk, flags=KEYEVENTF_KEYUP)
 
 
+# ── Path C: KEYEVENTF_UNICODE (internal fallback, supports surrogate pairs) ──
+
+
 def _type_unicode_char(char: str):
-    """Send a Unicode character via KEYEVENTF_UNICODE — works for any character."""
+    """Send a Unicode character via KEYEVENTF_UNICODE.
+
+    Handles BMP characters directly and supplementary plane characters
+    (e.g. emoji) as UTF-16 surrogate pairs.
+    """
     code = ord(char)
-    _send_key(scan=code, flags=KEYEVENTF_UNICODE)
+    if code <= 0xFFFF:
+        # BMP character — single event pair
+        _send_key(scan=code, flags=KEYEVENTF_UNICODE)
+        time.sleep(random.uniform(0.02, 0.06))
+        _send_key(scan=code, flags=KEYEVENTF_UNICODE | KEYEVENTF_KEYUP)
+    else:
+        # Supplementary plane — UTF-16 surrogate pair
+        high = 0xD800 + ((code - 0x10000) >> 10)
+        low = 0xDC00 + ((code - 0x10000) & 0x3FF)
+        _send_key(scan=high, flags=KEYEVENTF_UNICODE)
+        _send_key(scan=low, flags=KEYEVENTF_UNICODE)
+        time.sleep(random.uniform(0.02, 0.06))
+        _send_key(scan=low, flags=KEYEVENTF_UNICODE | KEYEVENTF_KEYUP)
+        _send_key(scan=high, flags=KEYEVENTF_UNICODE | KEYEVENTF_KEYUP)
+
+
+# ── IME detection and control ──
+
+
+def _get_foreground_ime_context():
+    """Get IME context for the foreground window."""
+    hwnd = user32.GetForegroundWindow()
+    return hwnd, imm32.ImmGetContext(hwnd)
+
+
+def _is_ime_chinese_mode() -> bool:
+    """Check if the current IME is in Chinese (non-alphanumeric) input mode."""
+    hwnd, himc = _get_foreground_ime_context()
+    if not himc:
+        return False
+    conversion = ctypes.wintypes.DWORD()
+    sentence = ctypes.wintypes.DWORD()
+    result = imm32.ImmGetConversionStatus(
+        himc, ctypes.byref(conversion), ctypes.byref(sentence)
+    )
+    imm32.ImmReleaseContext(hwnd, himc)
+    if not result:
+        return False
+    # If not alphanumeric mode, it's in Chinese/Japanese/Korean input mode
+    return (conversion.value & 0x01) != IME_CMODE_ALPHANUMERIC
+
+
+def _toggle_ime_to_english():
+    """Send Shift to toggle IME from Chinese to English mode."""
+    _send_key(vk=VK_SHIFT)
+    _send_key(vk=VK_SHIFT, flags=KEYEVENTF_KEYUP)
+    time.sleep(random.uniform(0.05, 0.10))
+
+
+# ── Path A: VK physical key simulation (ASCII) ──
+
+
+def type_char_vk(char: str):
+    """Type a single ASCII character using VK physical key simulation.
+
+    Uses VkKeyScanW to map the character to VK + shift state for the
+    current keyboard layout. Falls back to KEYEVENTF_UNICODE if the
+    character has no VK mapping.
+    """
+    result = user32.VkKeyScanW(ord(char))
+    if result == -1:
+        # No VK mapping on current layout — fallback
+        _type_unicode_char(char)
+        return
+
+    vk = result & 0xFF
+    shift_state = (result >> 8) & 0xFF
+    need_shift = bool(shift_state & 0x01)
+
+    if need_shift:
+        _send_key(vk=VK_SHIFT)
+        time.sleep(random.uniform(0.01, 0.03))
+
+    _send_key(vk=vk)
     time.sleep(random.uniform(0.02, 0.06))
-    _send_key(scan=code, flags=KEYEVENTF_UNICODE | KEYEVENTF_KEYUP)
+    _send_key(vk=vk, flags=KEYEVENTF_KEYUP)
+
+    if need_shift:
+        time.sleep(random.uniform(0.01, 0.03))
+        _send_key(vk=VK_SHIFT, flags=KEYEVENTF_KEYUP)
+
+
+# ── Path B: Clipboard paste (non-ASCII) ──
+
+
+def _get_clipboard_text() -> str | None:
+    """Read current clipboard text (CF_UNICODETEXT). Returns None if empty."""
+    if not user32.OpenClipboard(0):
+        return None
+    try:
+        handle = user32.GetClipboardData(CF_UNICODETEXT)
+        if not handle:
+            return None
+        ptr = kernel32.GlobalLock(handle)
+        if not ptr:
+            return None
+        try:
+            return ctypes.wstring_at(ptr)
+        finally:
+            kernel32.GlobalUnlock(handle)
+    finally:
+        user32.CloseClipboard()
+
+
+def _set_clipboard_text(text: str) -> bool:
+    """Write text to clipboard as CF_UNICODETEXT."""
+    if not user32.OpenClipboard(0):
+        return False
+    try:
+        user32.EmptyClipboard()
+        data = text.encode("utf-16-le") + b"\x00\x00"
+        handle = kernel32.GlobalAlloc(GMEM_MOVEABLE, len(data))
+        if not handle:
+            return False
+        ptr = kernel32.GlobalLock(handle)
+        if not ptr:
+            kernel32.GlobalFree(handle)
+            return False
+        ctypes.memmove(ptr, data, len(data))
+        kernel32.GlobalUnlock(handle)
+        user32.SetClipboardData(CF_UNICODETEXT, handle)
+        return True
+    finally:
+        user32.CloseClipboard()
+
+
+def clipboard_paste(text: str):
+    """Paste text via clipboard (Ctrl+V), preserving original clipboard content."""
+    # Save original clipboard
+    original = _get_clipboard_text()
+
+    # Write our text
+    if not _set_clipboard_text(text):
+        logger.warning("Failed to set clipboard, falling back to KEYEVENTF_UNICODE")
+        for ch in text:
+            _type_unicode_char(ch)
+        return
+
+    # Ctrl+V
+    _send_key(vk=VK_CONTROL)
+    time.sleep(random.uniform(0.02, 0.04))
+    _press_release_vk(WIN_VK["v"])
+    time.sleep(random.uniform(0.02, 0.04))
+    _send_key(vk=VK_CONTROL, flags=KEYEVENTF_KEYUP)
+
+    # Wait for paste to be processed by target application
+    time.sleep(random.uniform(0.05, 0.12))
+
+    # Restore original clipboard
+    if original is not None:
+        _set_clipboard_text(original)
+    else:
+        # Clear clipboard to original empty state
+        if user32.OpenClipboard(0):
+            user32.EmptyClipboard()
+            user32.CloseClipboard()
+
+
+# ── Public API ──
 
 
 def type_text(text: str):
-    r"""Type text with human-like delays.
+    r"""Type text using segmented input strategy.
 
-    Strategy:
-    - \n → Enter VK
-    - \t → Tab VK
-    - Everything else → KEYEVENTF_UNICODE (bypasses IME, works for all characters)
+    - ``\n`` → Enter VK
+    - ``\t`` → Tab VK
+    - ASCII printable → Path A (VK physical key, with IME toggle if needed)
+    - Non-ASCII → Path B (clipboard paste)
+
+    Note: When called via NativeActionBackend, IME management is handled
+    at the backend level.  This standalone function includes its own IME
+    toggle for direct usage.
     """
-    for char in text:
-        if char == '\n':
-            _press_release_vk(WIN_VK["return"])
-        elif char == '\t':
-            _press_release_vk(WIN_VK["tab"])
-        else:
-            _type_unicode_char(char)
+    ime_was_chinese = _is_ime_chinese_mode()
+    ime_toggled = False
 
+    segments = _split_text(text)
+    has_ascii = any(k == "ascii" for k, _ in segments)
+
+    if has_ascii and ime_was_chinese:
+        _toggle_ime_to_english()
+        ime_toggled = True
+
+    for kind, segment in segments:
+        if kind == "control":
+            for char in segment:
+                if char == "\n":
+                    _press_release_vk(WIN_VK["return"])
+                elif char == "\t":
+                    _press_release_vk(WIN_VK["tab"])
+        elif kind == "ascii":
+            for char in segment:
+                type_char_vk(char)
+        elif kind == "non_ascii":
+            clipboard_paste(segment)
+
+    if ime_toggled:
+        _toggle_ime_to_english()  # Shift toggles back
+
+
+def _split_text(text: str) -> list[tuple[str, str]]:
+    """Split text into contiguous segments of (kind, content).
+
+    Kinds: 'control' (\\n, \\t), 'ascii' (printable ASCII), 'non_ascii' (everything else).
+    """
+    if not text:
+        return []
+
+    segments: list[tuple[str, str]] = []
+    current_kind = _char_kind(text[0])
+    current_chars = [text[0]]
+
+    for char in text[1:]:
+        kind = _char_kind(char)
+        if kind == current_kind:
+            current_chars.append(char)
+        else:
+            segments.append((current_kind, "".join(current_chars)))
+            current_kind = kind
+            current_chars = [char]
+
+    segments.append((current_kind, "".join(current_chars)))
+    return segments
+
+
+def _char_kind(char: str) -> str:
+    if char in ("\n", "\t"):
+        return "control"
+    if 0x20 <= ord(char) <= 0x7E:
+        return "ascii"
+    return "non_ascii"
 
 
 def hotkey(combo: str):
