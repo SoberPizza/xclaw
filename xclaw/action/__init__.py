@@ -8,7 +8,8 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from xclaw.action.backend import ActionBackend
 
-__all__ = ["click", "double_click", "scroll", "move_to", "type_text", "hotkey",
+__all__ = ["click", "double_click", "scroll", "move_to", "drag",
+           "type_text", "hotkey",
            "get_backend", "set_backend", "freeze_backend"]
 
 _backend: ActionBackend | None = None
@@ -96,3 +97,7 @@ def type_text(text: str):
 
 def hotkey(combo: str):
     return get_backend().hotkey(combo)
+
+
+def drag(x1: int, y1: int, x2: int, y2: int, button: str = "left"):
+    return get_backend().drag(x1, y1, x2, y2, button=button)

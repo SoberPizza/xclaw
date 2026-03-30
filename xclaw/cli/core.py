@@ -8,7 +8,15 @@ IS_DEBUG = os.environ.get("DEBUG", "0") == "1"
 
 
 def setup():
-    """CLI initialization: configure logging strategy."""
+    """CLI initialization: configure DPI awareness and logging."""
+    # Per-Monitor DPI Aware — 让 GetSystemMetrics / SendInput 使用物理像素，
+    # 与 mss 截图坐标体系一致。必须在任何 user32 调用之前设置。
+    import ctypes
+    try:
+        ctypes.windll.shcore.SetProcessDpiAwareness(2)  # PROCESS_PER_MONITOR_DPI_AWARE
+    except (AttributeError, OSError):
+        ctypes.windll.user32.SetProcessDPIAware()
+
     root = logging.getLogger()
     root.handlers.clear()
 

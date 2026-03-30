@@ -3,7 +3,7 @@ import time
 import mss
 from PIL import Image
 
-from xclaw.config import SCREENSHOTS_DIR
+from xclaw.config import SCREENSHOTS_DIR, MAX_SCREENSHOTS
 
 
 def take_screenshot(region=None) -> dict:
@@ -31,6 +31,10 @@ def take_screenshot(region=None) -> dict:
     filename = f"screen_{timestamp}.png"
     image_path = SCREENSHOTS_DIR / filename
     img.save(str(image_path))
+
+    # Enforce retention limit
+    from xclaw.core.cleanup import enforce_max_files
+    enforce_max_files(SCREENSHOTS_DIR, "screen_*.png", MAX_SCREENSHOTS)
 
     return {
         "status": "ok",

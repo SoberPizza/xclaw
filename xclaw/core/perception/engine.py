@@ -1,7 +1,7 @@
 """Perception engine — platform-adaptive orchestrator.
 
 Delegates to a :class:`PerceptionBackend` (default: ``PipelineBackend``
-which uses YOLO + PaddleOCR + ConvNeXt-Tiny classifier).
+which uses YOLO + PaddleOCR + Florence-2 captioner).
 """
 
 import base64
@@ -11,7 +11,7 @@ from typing import Optional
 
 import numpy as np
 
-from xclaw.config import PERCEPTION_CONFIG
+from xclaw.config import PERCEPTION_CONFIG, SCREENSHOTS_DIR, LOGS_DIR, MAX_SCREENSHOTS, MAX_LOGS
 from xclaw.core.perception.backend import PerceptionBackend
 from xclaw.core.perception.merger import fuse_results
 from xclaw.core.perception.types import TextBox
@@ -146,6 +146,12 @@ class PerceptionEngine:
         if with_image:
             result["image_b64"] = self._encode_image(screenshot)
 
+        # ── Persist artifacts to disk ──
+        try:
+            self._save_artifacts(screenshot, result)
+        except Exception as e:
+            logger.warning("Failed to save artifacts to disk: %s", e)
+
         return result
 
     def screenshot_only(self, region=None) -> dict:
@@ -181,3 +187,36 @@ class PerceptionEngine:
         buf = io.BytesIO()
         pil_img.save(buf, format="PNG")
         return base64.b64encode(buf.getvalue()).decode()
+
+    @staticmethod
+    def _save_artifacts(screenshot: np.ndarray, result: dict) -> None:
+        """Persist screenshot PNG and perception JSON to disk.
+
+        Adds ``screenshot_path`` and ``log_path`` keys to *result* in-place.
+        """
+        import json
+        import time
+        from PIL import Image
+
+        timestamp = int(time.time() * 1000)
+
+        SCREENSHOTS_DIR.mkdir(parents=True, exist_ok=True)
+        LOGS_DIR.mkdir(parents=True, exist_ok=True)
+
+        # Screenshot
+        screenshot_file = SCREENSHOTS_DIR / f"screen_{timestamp}.png"
+        Image.fromarray(screenshot).save(str(screenshot_file))
+        result["screenshot_path"] = screenshot_file.as_posix()
+
+        # Perception JSON (screenshot_path already in result)
+        log_file = LOGS_DIR / f"perception_{timestamp}.json"
+        result["log_path"] = log_file.as_posix()
+        log_file.write_text(
+            json.dumps(result, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+
+        # Enforce retention limits
+        from xclaw.core.cleanup import enforce_max_files
+        enforce_max_files(SCREENSHOTS_DIR, "screen_*.png", MAX_SCREENSHOTS)
+        enforce_max_files(LOGS_DIR, "perception_*.json", MAX_LOGS)

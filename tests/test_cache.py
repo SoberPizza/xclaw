@@ -4,7 +4,6 @@ import tempfile
 import os
 
 from xclaw.core.perception.types import RawElement
-from xclaw.core.spatial.types import Column
 from xclaw.core.pipeline import PipelineResult
 from xclaw.core.cache import ResultCache
 
@@ -16,12 +15,11 @@ def _make_temp_image(content: bytes = b"PNG_FAKE_DATA") -> str:
     return path
 
 
-def _make_result(elements=None, columns=None):
+def _make_result(elements=None):
     return PipelineResult(
         elements=elements or [],
         resolution=(1920, 1080),
         image_path="test.png",
-        columns=columns,
     )
 
 
@@ -111,22 +109,3 @@ class TestLookupPoint:
         assert hit is None
         os.unlink(path)
 
-    def test_finds_column(self):
-        cache = ResultCache()
-        path = _make_temp_image()
-        elem = RawElement(
-            id=0, type="text", bbox=(100, 100, 200, 200),
-            center=(150, 150), content="test",
-        )
-        col = Column(
-            id=0, x_start=50, x_end=250,
-            element_ids=[0],
-        )
-        result = _make_result(elements=[elem], columns=[col])
-        cache.put(path, result)
-
-        hit = cache.lookup_point(path, 150, 150)
-        assert "element" in hit
-        assert "column" in hit
-        assert hit["column"]["id"] == 0
-        os.unlink(path)

@@ -36,22 +36,61 @@ Observe the screen. Takes a screenshot, diffs against previous state, and automa
 
 All action commands automatically observe the screen after execution and return `{action, perception, _meta}`.
 
-### `xclaw click <x> <y> [--double]`
+### `xclaw click <x> <y> [--double] [--button left|right|middle]`
 
-Click at screen coordinates. `--double` performs a double-click.
+Click at screen coordinates.
+
+- `--double`: perform a double-click
+- `--button`: select mouse button (default: `left`)
+
+```bash
+xclaw click 500 300                    # left click
+xclaw click 500 300 --double           # double click
+xclaw click 500 300 --button right     # right click (context menu)
+xclaw click 500 300 --button middle    # middle click (open in new tab)
+```
 
 ### `xclaw type <text>`
 
 Type text at the cursor position. Supports Chinese characters (automatically uses clipboard).
 
+```bash
+xclaw type "hello world"
+xclaw type "你好世界"
+```
+
 ### `xclaw press <key>`
 
-Press a single key or combination. Common keys: `enter`, `tab`, `escape`, `backspace`, `space`, `delete`.
-Combination key examples: `ctrl+a`, `alt+f4`, `ctrl+c`.
+Press a single key. For key combinations use `xclaw hotkey` instead.
 
-### `xclaw scroll <up|down> <amount> [--x X] [--y Y]`
+Common keys: `enter`, `tab`, `escape`, `backspace`, `space`, `delete`, `up`, `down`, `left`, `right`, `home`, `end`, `pageup`, `pagedown`, `f1`-`f12`.
 
-Scroll the mouse wheel.
+```bash
+xclaw press enter
+xclaw press tab
+xclaw press escape
+xclaw press f5
+```
+
+### `xclaw hotkey <combo>`
+
+Execute a key combination. Modifier keys: `ctrl`, `shift`, `alt`, `win`.
+
+```bash
+xclaw hotkey ctrl+c                    # copy
+xclaw hotkey ctrl+v                    # paste
+xclaw hotkey ctrl+a                    # select all
+xclaw hotkey ctrl+z                    # undo
+xclaw hotkey ctrl+shift+t             # reopen closed tab
+xclaw hotkey alt+f4                    # close window
+xclaw hotkey alt+tab                   # switch window
+xclaw hotkey win+d                     # show desktop
+xclaw hotkey ctrl+shift+escape        # task manager
+```
+
+### `xclaw scroll <up|down|left|right> <amount> [--x X] [--y Y]`
+
+Scroll the mouse wheel. Supports vertical (up/down) and horizontal (left/right) scrolling.
 
 **Parameters:**
 
@@ -66,13 +105,76 @@ Scroll the mouse wheel.
 | **500+** | **Recommended - clear visible scroll** |
 | 1000+ | Large scroll (major page movement) |
 
+```bash
+xclaw scroll down 500                  # scroll down
+xclaw scroll up 1000                   # scroll up a lot
+xclaw scroll down 500 --x 200 --y 400 # scroll at specific position
+xclaw scroll right 500                 # horizontal scroll right (wide tables)
+xclaw scroll left 300                  # horizontal scroll left
+```
+
+### `xclaw drag <x1> <y1> <x2> <y2> [--button left|right|middle]`
+
+Drag from (x1, y1) to (x2, y2). Mouse button down at start, humanized move, mouse button up at end.
+
+Use cases: drag-and-drop files, resize windows, move sliders, select text, draw selections.
+
+```bash
+xclaw drag 100 100 500 400             # drag selection
+xclaw drag 50 200 300 200              # move slider horizontally
+xclaw drag 960 0 960 500               # resize window (drag title bar down)
+xclaw drag 100 50 400 50 --button left # drag file to another location
+```
+
+### `xclaw move <x> <y>`
+
+Move cursor to (x, y) without clicking. Triggers hover effects.
+
+Use cases: reveal tooltips, expand dropdown menus on hover, highlight buttons.
+
+```bash
+xclaw move 500 300                     # hover over element
+xclaw move 100 50                      # hover to reveal tooltip
+```
+
+### `xclaw hold <left|right|middle> <down|up> [--x X] [--y Y]`
+
+Press or release a mouse button independently. For complex multi-step interactions where `drag` is not flexible enough.
+
+Coordinates default to current cursor position if not specified.
+
+```bash
+xclaw hold left down --x 100 --y 200   # press left button at (100, 200)
+xclaw move 300 400                     # move while holding
+xclaw hold left up --x 300 --y 400     # release at (300, 400)
+
+# Ctrl+click multi-select pattern:
+xclaw hotkey ctrl                       # (use hold for modifier if needed)
+xclaw click 100 200                    # click first item
+xclaw click 100 300                    # click second item
+```
+
+### `xclaw cursor`
+
+Query cursor position and screen size. Returns JSON directly — does NOT trigger perception.
+
+```bash
+xclaw cursor
+# → {"cursor": [512, 384], "screen": [1920, 1080]}
+```
+
 ### `xclaw wait <seconds>`
 
-Wait for the specified number of seconds, then observe the screen.
+Wait for the specified number of seconds, then observe the screen. Use during page transitions or loading.
+
+```bash
+xclaw wait 2                           # wait 2 seconds
+xclaw wait 0.5                         # wait 500ms
+```
 
 ### Action Response Format
 
-Every action command returns:
+Every action command (except `cursor`) returns:
 
 ```json
 {

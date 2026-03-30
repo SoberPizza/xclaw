@@ -27,6 +27,7 @@ class HumanizeStrategy(Protocol):
         ...
 
     def inter_scroll_delay(self) -> None: ...
+    def pre_drag_delay(self) -> None: ...
 
 
 class NoopStrategy:
@@ -52,6 +53,9 @@ class NoopStrategy:
         return remaining
 
     def inter_scroll_delay(self) -> None:
+        pass
+
+    def pre_drag_delay(self) -> None:
         pass
 
 
@@ -132,3 +136,6 @@ class BezierStrategy:
 
     def inter_scroll_delay(self) -> None:
         time.sleep(random.uniform(0.02, 0.08))
+
+    def pre_drag_delay(self) -> None:
+        time.sleep(random.uniform(0.04, 0.10))

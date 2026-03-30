@@ -55,7 +55,8 @@ class TestPerceptionGracefulDegradation:
         import numpy as np
         fake_screenshot = np.zeros((1080, 1920, 3), dtype=np.uint8)
 
-        with patch.object(engine, "_capture", return_value=fake_screenshot):
+        with patch.object(engine, "_capture", return_value=fake_screenshot), \
+             patch.object(engine, "_save_artifacts"):
             result = engine.full_look()
 
         assert result["status"] == "ok"
@@ -79,7 +80,8 @@ class TestPerceptionGracefulDegradation:
         import numpy as np
         fake_screenshot = np.zeros((1080, 1920, 3), dtype=np.uint8)
 
-        with patch.object(engine, "_capture", return_value=fake_screenshot):
+        with patch.object(engine, "_capture", return_value=fake_screenshot), \
+             patch.object(engine, "_save_artifacts"):
             result = engine.full_look()
 
         assert result["status"] == "ok"
@@ -105,7 +107,8 @@ class TestPerceptionGracefulDegradation:
         import numpy as np
         fake_screenshot = np.zeros((1080, 1920, 3), dtype=np.uint8)
 
-        with patch.object(engine, "_capture", return_value=fake_screenshot):
+        with patch.object(engine, "_capture", return_value=fake_screenshot), \
+             patch.object(engine, "_save_artifacts"):
             result = engine.full_look()
 
         assert result["status"] == "ok"
@@ -127,11 +130,71 @@ class TestPerceptionGracefulDegradation:
         import numpy as np
         fake_screenshot = np.zeros((1080, 1920, 3), dtype=np.uint8)
 
-        with patch.object(engine, "_capture", return_value=fake_screenshot):
+        with patch.object(engine, "_capture", return_value=fake_screenshot), \
+             patch.object(engine, "_save_artifacts"):
             result = engine.full_look()
 
         assert result["status"] == "ok"
         assert "degraded" not in result
+
+
+class TestArtifactPersistence:
+    def test_full_look_saves_screenshot_and_json(self, tmp_path):
+        """full_look() should save screenshot PNG and perception JSON."""
+        import json
+        import numpy as np
+        from xclaw.core.perception.engine import PerceptionEngine
+
+        mock_backend = MagicMock()
+        mock_backend.load_models.return_value = None
+        mock_backend.detect_icons.return_value = []
+        mock_backend.detect_text.return_value = []
+        mock_backend.classifier_enabled = False
+
+        engine = PerceptionEngine(backend=mock_backend)
+        fake_screenshot = np.zeros((1080, 1920, 3), dtype=np.uint8)
+
+        screenshots_dir = tmp_path / "screenshots"
+        logs_dir = tmp_path / "logs"
+
+        with patch.object(engine, "_capture", return_value=fake_screenshot), \
+             patch("xclaw.core.perception.engine.SCREENSHOTS_DIR", screenshots_dir), \
+             patch("xclaw.core.perception.engine.LOGS_DIR", logs_dir):
+            result = engine.full_look()
+
+        assert "screenshot_path" in result
+        assert "log_path" in result
+
+        png_files = list(screenshots_dir.glob("screen_*.png"))
+        assert len(png_files) == 1
+
+        json_files = list(logs_dir.glob("perception_*.json"))
+        assert len(json_files) == 1
+
+        saved = json.loads(json_files[0].read_text(encoding="utf-8"))
+        assert saved["status"] == "ok"
+        assert "screenshot_path" in saved
+
+    def test_save_failure_does_not_break_pipeline(self):
+        """Disk I/O failure should not prevent full_look() from returning."""
+        import numpy as np
+        from xclaw.core.perception.engine import PerceptionEngine
+
+        mock_backend = MagicMock()
+        mock_backend.load_models.return_value = None
+        mock_backend.detect_icons.return_value = []
+        mock_backend.detect_text.return_value = []
+        mock_backend.classifier_enabled = False
+
+        engine = PerceptionEngine(backend=mock_backend)
+        fake_screenshot = np.zeros((1080, 1920, 3), dtype=np.uint8)
+
+        with patch.object(engine, "_capture", return_value=fake_screenshot), \
+             patch.object(engine, "_save_artifacts", side_effect=OSError("disk full")):
+            result = engine.full_look()
+
+        assert result["status"] == "ok"
+        assert "screenshot_path" not in result
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -223,7 +286,7 @@ class TestModelVerification:
         model_file.write_bytes(b"tiny")  # 4 bytes, way below min_size_mb
 
         # Create minimal MiniCPM-V config
-        caption_dir = tmp_path / "icon_caption_minicpm"
+        caption_dir = tmp_path / "icon_caption_florence"
         caption_dir.mkdir()
         config_file = caption_dir / "config.json"
         config_file.write_text("{}")
@@ -242,11 +305,13 @@ class TestModelVerification:
         icon_dir.mkdir()
         model_file = icon_dir / "model.pt"
         model_file.write_bytes(b"x" * (25 * 1024 * 1024))  # 25 MB
+        onnx_file = icon_dir / "model.onnx"
+        onnx_file.write_bytes(b"x" * (25 * 1024 * 1024))  # 25 MB
 
-        caption_dir = tmp_path / "icon_caption_minicpm"
+        caption_dir = tmp_path / "icon_caption_florence"
         caption_dir.mkdir()
         config_file = caption_dir / "config.json"
-        config_file.write_text('{"model_type": "minicpm"}' + " " * 1100)
+        config_file.write_text('{"model_type": "florence2"}' + " " * 1100)
 
         result = verify_models(tmp_path)
         assert result is True
@@ -283,41 +348,42 @@ class TestDownloadRetry:
         """First call fails, second succeeds → no exception raised."""
         from scripts.download_models import _download_with_retry
 
-        with patch("subprocess.run") as mock_run, \
-             patch("time.sleep"):  # skip actual sleep
-            mock_run.side_effect = [
-                subprocess.CalledProcessError(1, "cmd"),
-                None,  # success
-            ]
-            _download_with_retry(["fake", "cmd"], label="test")
+        call_count = 0
+        def flaky_fn():
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                raise RuntimeError("transient failure")
 
-        assert mock_run.call_count == 2
+        with patch("time.sleep"):  # skip actual sleep
+            _download_with_retry(flaky_fn, label="test")
+
+        assert call_count == 2
 
     def test_all_retries_exhausted_raises(self):
-        """All retries fail → CalledProcessError propagates."""
+        """All retries fail → exception propagates."""
         from scripts.download_models import _download_with_retry
 
-        with patch("subprocess.run") as mock_run, \
-             patch("time.sleep"):
-            mock_run.side_effect = subprocess.CalledProcessError(1, "cmd")
+        def always_fail():
+            raise RuntimeError("permanent failure")
 
-            with pytest.raises(subprocess.CalledProcessError):
-                _download_with_retry(["fake", "cmd"], max_retries=3, label="test")
-
-        assert mock_run.call_count == 3
+        with patch("time.sleep"):
+            with pytest.raises(RuntimeError):
+                _download_with_retry(always_fail, max_retries=3, label="test")
 
     def test_exponential_backoff_timing(self):
         """Retry waits should follow 2s, 4s, 8s pattern."""
         from scripts.download_models import _download_with_retry
 
-        with patch("subprocess.run") as mock_run, \
-             patch("time.sleep") as mock_sleep:
-            mock_run.side_effect = [
-                subprocess.CalledProcessError(1, "cmd"),
-                subprocess.CalledProcessError(1, "cmd"),
-                None,  # success on 3rd try
-            ]
-            _download_with_retry(["fake", "cmd"], max_retries=3, label="test")
+        call_count = 0
+        def flaky_fn():
+            nonlocal call_count
+            call_count += 1
+            if call_count < 3:
+                raise RuntimeError("transient failure")
+
+        with patch("time.sleep") as mock_sleep:
+            _download_with_retry(flaky_fn, max_retries=3, label="test")
 
         # Should have slept twice: 2s then 4s
         assert mock_sleep.call_count == 2

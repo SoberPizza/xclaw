@@ -1,15 +1,14 @@
 #!/usr/bin/env python3
-"""X-Claw cross-platform model downloader.
+"""X-Claw model downloader.
 
-Total download: ~1.3 GB
+Total download: ~500 MB (YOLO ~50 MB + Florence-2 ~460 MB)
 
-macOS: uv run --extra mac python scripts/download_models.py
-Win:   uv run --extra win python scripts/download_models.py
+Usage:   uv run python scripts/download_models.py
 """
 
 import hashlib
 import os
-import platform
+import shutil
 import sys
 from pathlib import Path
 
@@ -25,15 +24,34 @@ OMNIPARSER_FILES = [
     "icon_detect/train_args.yaml",
 ]
 
-MINICPM_REPO = "openbmb/MiniCPM-V-2"
+FLORENCE_BASE_REPO = "microsoft/Florence-2-base"
+
+# auto_map entries that reference local files (avoids stale HF cache)
+_FLORENCE_LOCAL_AUTO_MAP = {
+    "AutoConfig": "configuration_florence2.Florence2Config",
+    "AutoModelForCausalLM": "modeling_florence2.Florence2ForConditionalGeneration",
+}
+
+
+def _fix_florence_config(florence_dir: Path) -> None:
+    """Patch config.json auto_map to reference local .py files."""
+    import json
+
+    config_path = florence_dir / "config.json"
+    if not config_path.exists():
+        return
+    cfg = json.loads(config_path.read_text(encoding="utf-8"))
+    if cfg.get("auto_map") != _FLORENCE_LOCAL_AUTO_MAP:
+        cfg["auto_map"] = _FLORENCE_LOCAL_AUTO_MAP
+        config_path.write_text(
+            json.dumps(cfg, indent=2, ensure_ascii=False), encoding="utf-8",
+        )
 
 # SHA256 prefix manifest — warn-only, does not block loading.
-# Compute with: python -c "import hashlib; print(hashlib.sha256(open(f,'rb').read()).hexdigest()[:16])"
-# Set to None for files where the hash is not yet known.
 MODEL_MANIFEST: dict[str, dict] = {
     "icon_detect/model.pt": {"min_size_mb": 20},
     "icon_detect/model.yaml": {"min_size_mb": 0.001},
-    "icon_caption_minicpm/config.json": {"min_size_mb": 0.001},
+    "icon_caption_florence/config.json": {"min_size_mb": 0.001},
 }
 
 
@@ -68,7 +86,7 @@ def _download_with_retry(
 
 
 def download_omniparser(dest_dir: Path, progress_callback=None) -> bool:
-    """Download OmniParser V2 models + MiniCPM-V to *dest_dir*.
+    """Download OmniParser V2 YOLO + Florence-2 icon caption to *dest_dir*.
 
     *progress_callback*, if provided, is called as ``cb(file_index, total, filename)``
     before each file download starts.
@@ -76,8 +94,9 @@ def download_omniparser(dest_dir: Path, progress_callback=None) -> bool:
     Returns True on success.
     """
     dest_dir.mkdir(parents=True, exist_ok=True)
-    total = len(OMNIPARSER_FILES) + 1  # +1 for MiniCPM-V
+    total = len(OMNIPARSER_FILES) + 2  # +1 Florence-2 base files, +1 Florence-2 fine-tuned
 
+    # ── YOLO files ──
     for idx, f in enumerate(OMNIPARSER_FILES):
         if progress_callback:
             progress_callback(idx, total, f)
@@ -91,20 +110,53 @@ def download_omniparser(dest_dir: Path, progress_callback=None) -> bool:
             label=f,
         )
 
-    # Download MiniCPM-V 2.0
+    # ── Florence-2 icon caption ──
+    florence_dir = dest_dir / "icon_caption_florence"
+
+    # Step 1: Download processor/tokenizer/code files from Florence-2-base
     idx = len(OMNIPARSER_FILES)
     if progress_callback:
-        progress_callback(idx, total, "MiniCPM-V-2")
+        progress_callback(idx, total, "Florence-2-base (processor)")
     else:
-        print(f"  ↓ MiniCPM-V-2 (icon caption)")
+        print("  ↓ Florence-2-base (processor + tokenizer)")
 
-    minicpm_dir = dest_dir / "icon_caption_minicpm"
     _download_with_retry(
         lambda: snapshot_download(
-            MINICPM_REPO, local_dir=str(minicpm_dir),
+            FLORENCE_BASE_REPO,
+            local_dir=str(florence_dir),
+            ignore_patterns=["*.safetensors", "*.bin", "*.msgpack", "onnx/*"],
         ),
-        label="MiniCPM-V-2",
+        label="Florence-2-base processor",
     )
+
+    # Step 2: Download fine-tuned weights from OmniParser V2
+    idx += 1
+    if progress_callback:
+        progress_callback(idx, total, "Florence-2 fine-tuned weights")
+    else:
+        print("  ↓ Florence-2 fine-tuned weights (icon caption)")
+
+    _download_with_retry(
+        lambda: snapshot_download(
+            OMNIPARSER_REPO,
+            local_dir=str(dest_dir),
+            allow_patterns=["icon_caption/*"],
+        ),
+        label="Florence-2 fine-tuned",
+    )
+
+    # Move icon_caption/* files into icon_caption_florence/
+    src_dir = dest_dir / "icon_caption"
+    if src_dir.exists():
+        florence_dir.mkdir(parents=True, exist_ok=True)
+        for item in src_dir.iterdir():
+            dst = florence_dir / item.name
+            if item.is_file():
+                shutil.copy2(str(item), str(dst))
+        shutil.rmtree(str(src_dir))
+
+    # Fix config.json auto_map to use local files (avoids stale HF cache issues)
+    _fix_florence_config(florence_dir)
 
     if progress_callback:
         progress_callback(total, total, "done")
@@ -119,7 +171,7 @@ def init_paddleocr() -> bool:
         return True
     except ImportError as e:
         print(f"  paddleocr init failed: {e}")
-        print("  Run: uv sync --extra mac (or --extra win)")
+        print("  Run: uv sync")
         return False
     except Exception as e:
         print(f"  paddleocr init failed: {e}")
@@ -174,7 +226,7 @@ def verify_models(model_dir: Path) -> bool:
     checks = {
         "YOLO": model_dir / "icon_detect" / "model.pt",
         "YOLO ONNX": model_dir / "icon_detect" / "model.onnx",
-        "MiniCPM-V": model_dir / "icon_caption_minicpm" / "config.json",
+        "Florence-2": model_dir / "icon_caption_florence" / "config.json",
     }
     all_ok = True
     for name, path in checks.items():
@@ -208,6 +260,8 @@ MODELS = Path(__file__).parent.parent / "models"
 
 
 def main():
+    import platform
+
     MODELS.mkdir(exist_ok=True)
 
     print("=" * 60)
@@ -216,8 +270,8 @@ def main():
     print(f"  Target:   {MODELS}")
     print("=" * 60)
 
-    # 1. OmniParser V2
-    print(f"\n📦 OmniParser V2 (~1.12 GB)")
+    # 1. OmniParser V2 + Florence-2
+    print(f"\n📦 OmniParser V2 + Florence-2 (~500 MB)")
     download_omniparser(MODELS)
 
     # 2. YOLO ONNX export

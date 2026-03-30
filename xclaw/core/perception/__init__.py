@@ -1,1 +1,1 @@
-"""L1 perception layer — YOLO detection + PaddleOCR + ConvNeXt-Tiny classifier."""
+"""L1 perception layer — YOLO detection + PaddleOCR + Florence-2 captioner."""

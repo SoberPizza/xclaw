@@ -40,6 +40,33 @@ class NativeActionBackend:
         self._ensure_platform()
         self._mouse.move_to(x, y)
 
+    def drag(self, x1: int, y1: int, x2: int, y2: int, button: str = "left") -> dict:
+        self._ensure_platform()
+        # Move to start position
+        fx1, fy1 = self._humanize.move_to_target(x1, y1, self._mouse.move_to)
+        self._humanize.pre_drag_delay()
+        # Press button down
+        self._mouse.mouse_down(fx1, fy1, button)
+        self._humanize.pre_drag_delay()
+        # Move to end position (with humanized curve)
+        fx2, fy2 = self._humanize.move_to_target(x2, y2, self._mouse.move_to)
+        self._humanize.pre_drag_delay()
+        # Release button
+        self._mouse.mouse_up(fx2, fy2, button)
+        return {"status": "ok", "action": "drag", "x1": x1, "y1": y1, "x2": x2, "y2": y2, "button": button}
+
+    def mouse_down(self, x: int, y: int, button: str = "left") -> dict:
+        self._ensure_platform()
+        fx, fy = self._humanize.move_to_target(x, y, self._mouse.move_to)
+        self._humanize.pre_click_delay()
+        self._mouse.mouse_down(fx, fy, button)
+        return {"status": "ok", "action": "mouse_down", "x": x, "y": y, "button": button}
+
+    def mouse_up(self, x: int, y: int, button: str = "left") -> dict:
+        self._ensure_platform()
+        self._mouse.mouse_up(x, y, button)
+        return {"status": "ok", "action": "mouse_up", "x": x, "y": y, "button": button}
+
     def scroll(self, direction: str, amount: int, x: int | None = None, y: int | None = None) -> dict:
         self._ensure_platform()
         if x is None or y is None:

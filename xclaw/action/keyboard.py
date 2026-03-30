@@ -19,3 +19,13 @@ def press_key(key: str) -> dict:
         {"status": "ok", "action": "press", "key": key}
     """
     return get_backend().press_key(key)
+
+
+def hotkey(combo: str) -> dict:
+    """Execute a key combination (e.g. ctrl+c, alt+f4).
+
+    Returns:
+        {"status": "ok", "action": "hotkey", "combo": combo}
+    """
+    get_backend().hotkey(combo)
+    return {"status": "ok", "action": "hotkey", "combo": combo}

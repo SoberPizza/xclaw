@@ -67,17 +67,6 @@ class ResultCache:
                 }
                 break
 
-        # Find column containing the point
-        if result.columns:
-            for col in result.columns:
-                if col.x_start <= x <= col.x_end:
-                    hit["column"] = {
-                        "id": col.id,
-                        "x_start": col.x_start,
-                        "x_end": col.x_end,
-                    }
-                    break
-
         return hit if hit else None
 
     def clear(self) -> None:

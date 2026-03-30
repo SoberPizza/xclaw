@@ -1,4 +1,4 @@
-"""Default perception backend: YOLO (TRT/CUDA) + PaddleOCR + ConvNeXt-Tiny classifier."""
+"""Default perception backend: YOLO (TRT/CUDA) + PaddleOCR + Florence-2 captioner."""
 
 from __future__ import annotations
 
@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 
 
 class PipelineBackend:
-    """Default backend — YOLO icon detection + PaddleOCR + ConvNeXt-Tiny classifier."""
+    """Default backend — YOLO icon detection + PaddleOCR + Florence-2 captioner."""
 
     def __init__(self, config: PerceptionConfig):
         self._config = config
@@ -78,14 +78,13 @@ class PipelineBackend:
             det_limit=self._config.ocr_det_limit,
         )
 
-        # 3. ConvNeXt-Tiny icon classifier (stub)
+        # 3. Florence-2 icon captioner (from OmniParser V2)
         if self._config.classifier_enabled:
-            classifier_dir = model_dir / "icon_classifier"
-            model_file = classifier_dir / "model.pt"
+            caption_dir = model_dir / "icon_caption_florence"
             from xclaw.core.perception.icon_classifier import IconClassifier
 
             self._classifier = IconClassifier(
-                model_path=model_file,
+                model_path=caption_dir,
                 device=self._config.classifier_device,
             )
             self._classifier.load()

@@ -55,8 +55,15 @@ class KEYBDINPUT(ctypes.Structure):
 
 
 class INPUT(ctypes.Structure):
+    # Windows INPUT union 的大小取最大成员（MOUSEINPUT = 32 bytes），
+    # 如果只放 KEYBDINPUT（24 bytes），sizeof(INPUT) 会少 8 bytes，
+    # 导致 SendInput 因 cbSize 不匹配而静默失败。
+    # 用 _pad 填充到 MOUSEINPUT 的大小以保证结构体正确。
     class _INPUT_UNION(ctypes.Union):
-        _fields_ = [("ki", KEYBDINPUT)]
+        _fields_ = [
+            ("ki", KEYBDINPUT),
+            ("_pad", ctypes.c_ubyte * 32),
+        ]
 
     _anonymous_ = ("_input",)
     _fields_ = [
@@ -85,8 +92,8 @@ def _press_release_vk(vk: int):
 def _type_unicode_char(char: str):
     """Send a Unicode character via KEYEVENTF_UNICODE — works for any character."""
     code = ord(char)
-    # For characters in BMP
     _send_key(scan=code, flags=KEYEVENTF_UNICODE)
+    time.sleep(random.uniform(0.02, 0.06))
     _send_key(scan=code, flags=KEYEVENTF_UNICODE | KEYEVENTF_KEYUP)
 
 
@@ -96,25 +103,13 @@ def type_text(text: str):
     Strategy:
     - \n → Enter VK
     - \t → Tab VK
-    - ASCII letters/digits → VK code (with shift for uppercase)
-    - Everything else (Chinese/emoji) → KEYEVENTF_UNICODE
+    - Everything else → KEYEVENTF_UNICODE (bypasses IME, works for all characters)
     """
     for char in text:
         if char == '\n':
             _press_release_vk(WIN_VK["return"])
         elif char == '\t':
             _press_release_vk(WIN_VK["tab"])
-        elif char == ' ':
-            _press_release_vk(WIN_VK["space"])
-        elif char.lower() in WIN_VK and ord(char) < 128:
-            vk = WIN_VK[char.lower()]
-            if char.isupper():
-                _send_key(vk=WIN_VK["shift"])
-                time.sleep(random.uniform(0.01, 0.03))
-                _press_release_vk(vk)
-                _send_key(vk=WIN_VK["shift"], flags=KEYEVENTF_KEYUP)
-            else:
-                _press_release_vk(vk)
         else:
             _type_unicode_char(char)
 

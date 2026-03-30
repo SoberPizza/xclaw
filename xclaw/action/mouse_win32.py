@@ -18,6 +18,7 @@ MOUSEEVENTF_RIGHTUP = 0x0010
 MOUSEEVENTF_MIDDLEDOWN = 0x0020
 MOUSEEVENTF_MIDDLEUP = 0x0040
 MOUSEEVENTF_WHEEL = 0x0800
+MOUSEEVENTF_HWHEEL = 0x01000
 WHEEL_DELTA = 120
 
 
@@ -106,7 +107,40 @@ def double_click(x: int, y: int):
 
 
 def scroll(direction: str = "down", steps: int = 3):
-    delta = WHEEL_DELTA if direction == "up" else -WHEEL_DELTA
-    for _ in range(steps):
-        _send_mouse(MOUSEEVENTF_WHEEL, data=delta)
-        time.sleep(random.uniform(0.05, 0.15))
+    if direction in ("left", "right"):
+        delta = WHEEL_DELTA if direction == "right" else -WHEEL_DELTA
+        for _ in range(steps):
+            _send_mouse(MOUSEEVENTF_HWHEEL, data=delta)
+            time.sleep(random.uniform(0.05, 0.15))
+    else:
+        delta = WHEEL_DELTA if direction == "up" else -WHEEL_DELTA
+        for _ in range(steps):
+            _send_mouse(MOUSEEVENTF_WHEEL, data=delta)
+            time.sleep(random.uniform(0.05, 0.15))
+
+
+_BTN_DOWN = {
+    "left": MOUSEEVENTF_LEFTDOWN,
+    "right": MOUSEEVENTF_RIGHTDOWN,
+    "middle": MOUSEEVENTF_MIDDLEDOWN,
+}
+_BTN_UP = {
+    "left": MOUSEEVENTF_LEFTUP,
+    "right": MOUSEEVENTF_RIGHTUP,
+    "middle": MOUSEEVENTF_MIDDLEUP,
+}
+
+
+def mouse_down(x: int, y: int, button: str = "left"):
+    """Press mouse button down at (x, y) without releasing."""
+    move_to(x, y)
+    ax, ay = _to_absolute(x, y)
+    flag = _BTN_DOWN.get(button, MOUSEEVENTF_LEFTDOWN)
+    _send_mouse(flag | MOUSEEVENTF_ABSOLUTE, ax, ay)
+
+
+def mouse_up(x: int, y: int, button: str = "left"):
+    """Release mouse button at (x, y)."""
+    ax, ay = _to_absolute(x, y)
+    flag = _BTN_UP.get(button, MOUSEEVENTF_LEFTUP)
+    _send_mouse(flag | MOUSEEVENTF_ABSOLUTE, ax, ay)

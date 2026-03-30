@@ -23,6 +23,15 @@ class DryRunBackend:
     def move_to(self, x: int, y: int) -> None:
         self._record(action="move_to", x=x, y=y)
 
+    def drag(self, x1: int, y1: int, x2: int, y2: int, button: str = "left") -> dict:
+        return self._record(action="drag", x1=x1, y1=y1, x2=x2, y2=y2, button=button)
+
+    def mouse_down(self, x: int, y: int, button: str = "left") -> dict:
+        return self._record(action="mouse_down", x=x, y=y, button=button)
+
+    def mouse_up(self, x: int, y: int, button: str = "left") -> dict:
+        return self._record(action="mouse_up", x=x, y=y, button=button)
+
     def scroll(self, direction: str, amount: int, x: int | None = None, y: int | None = None) -> dict:
         return self._record(action="scroll", direction=direction, amount=amount, x=x, y=y)
 

@@ -40,11 +40,12 @@ MERGER_IOU_THRESHOLD = 0.5
 MERGER_SMALL_ELEMENT_SIZE = 32               # 双维低于此值的元素视为"小元素"
 MERGER_SMALL_ELEMENT_CENTER_DIST = 15        # 小元素去重：中心点距离阈值（px）
 
-# ── L2: Spatial Aggregation ──
-ROW_Y_TOLERANCE = 8
-
 # ── Pipeline Cache ──
 CACHE_MAX_SIZE = 8
+
+# ── Artifact retention ──
+MAX_SCREENSHOTS = 100
+MAX_LOGS = 100
 
 # ── TensorRT ──
 YOLO_TRT_ENABLED = os.environ.get("XCLAW_TRT", "1") == "1"

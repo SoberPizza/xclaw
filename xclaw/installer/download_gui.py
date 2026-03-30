@@ -3,6 +3,7 @@
 Uses only Python builtins + huggingface_hub (already a dependency).
 """
 
+import shutil
 import subprocess
 import sys
 import threading
@@ -20,7 +21,7 @@ OMNIPARSER_FILES = [
     "icon_detect/train_args.yaml",
 ]
 
-MINICPM_REPO = "openbmb/MiniCPM-V-2"
+FLORENCE_BASE_REPO = "microsoft/Florence-2-base"
 
 
 class DownloadGUI:
@@ -67,7 +68,7 @@ class DownloadGUI:
 
     def _download_thread(self):
         try:
-            total_steps = len(OMNIPARSER_FILES) + 3  # +1 MiniCPM-V, +1 PaddleOCR, +1 init
+            total_steps = len(OMNIPARSER_FILES) + 4  # +2 Florence-2, +1 PaddleOCR, +1 init
             step = 0
 
             self._ui(status="下载 OmniParser V2 …")
@@ -88,21 +89,48 @@ class DownloadGUI:
                     label=f,
                 )
 
-            # Download MiniCPM-V 2.0
+            # Download Florence-2 processor/tokenizer from base model
+            florence_dir = self.model_dir / "icon_caption_florence"
             step += 1
             self._ui(
-                status="下载 MiniCPM-V 2.0 …",
-                file="icon caption model",
+                status="下载 Florence-2 processor …",
+                file="processor + tokenizer",
                 progress=step / total_steps * 100,
             )
-            minicpm_dir = self.model_dir / "icon_caption_minicpm"
             self._download_with_retry(
                 [
                     sys.executable, "-m", "huggingface_hub", "download",
-                    MINICPM_REPO, "--local-dir", str(minicpm_dir),
+                    FLORENCE_BASE_REPO,
+                    "--local-dir", str(florence_dir),
+                    "--exclude", "*.safetensors", "*.bin", "*.msgpack", "onnx/*",
                 ],
-                label="MiniCPM-V-2",
+                label="Florence-2-base processor",
             )
+
+            # Download Florence-2 fine-tuned weights from OmniParser
+            step += 1
+            self._ui(
+                status="下载 Florence-2 模型权重 …",
+                file="icon caption fine-tuned weights",
+                progress=step / total_steps * 100,
+            )
+            self._download_with_retry(
+                [
+                    sys.executable, "-m", "huggingface_hub", "download",
+                    OMNIPARSER_REPO,
+                    "--include", "icon_caption/*",
+                    "--local-dir", str(self.model_dir),
+                ],
+                label="Florence-2 fine-tuned",
+            )
+            # Move icon_caption/* files into icon_caption_florence/
+            src_dir = self.model_dir / "icon_caption"
+            if src_dir.exists():
+                florence_dir.mkdir(parents=True, exist_ok=True)
+                for item in src_dir.iterdir():
+                    if item.is_file():
+                        shutil.copy2(str(item), str(florence_dir / item.name))
+                shutil.rmtree(str(src_dir))
 
             # PaddleOCR
             step += 1
