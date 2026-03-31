@@ -1,9 +1,10 @@
 """Windows keyboard control via ctypes SendInput.
 
-Three input paths:
+Four input paths:
   A) VK physical key simulation for ASCII characters (with IME detection)
-  B) Clipboard paste for non-ASCII characters (Chinese, emoji, kaomoji)
+  B) Clipboard paste for non-ASCII characters (fallback)
   C) KEYEVENTF_UNICODE as internal fallback (supports surrogate pairs)
+  D) IMM32 composition injection for CJK text (generates real IME events)
 """
 
 import ctypes
@@ -40,6 +41,26 @@ imm32.ImmGetContext.restype = ctypes.c_void_p
 imm32.ImmGetContext.argtypes = [ctypes.c_void_p]
 imm32.ImmGetConversionStatus.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.wintypes.DWORD), ctypes.POINTER(ctypes.wintypes.DWORD)]
 imm32.ImmReleaseContext.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
+
+# ImmSetCompositionStringW — inject composition text into the IME pipeline
+SCS_SETSTR = 0x9
+imm32.ImmSetCompositionStringW.restype = ctypes.c_int
+imm32.ImmSetCompositionStringW.argtypes = [
+    ctypes.c_void_p,  # hIMC
+    ctypes.c_ulong,   # dwIndex (SCS_SETSTR)
+    ctypes.c_wchar_p, # lpComp (composition string)
+    ctypes.c_ulong,   # dwCompLen (byte length)
+    ctypes.c_wchar_p, # lpRead (reading string, NULL)
+    ctypes.c_ulong,   # dwReadLen
+]
+
+# ImmNotifyIME — tell IME to commit the composition
+NI_COMPOSITIONSTR = 0x0015
+CPS_COMPLETE = 0x0001
+imm32.ImmNotifyIME.restype = ctypes.c_int
+imm32.ImmNotifyIME.argtypes = [
+    ctypes.c_void_p, ctypes.c_ulong, ctypes.c_ulong, ctypes.c_ulong,
+]
 
 user32.VkKeyScanW.restype = ctypes.c_short
 user32.VkKeyScanW.argtypes = [ctypes.c_wchar]
@@ -210,6 +231,39 @@ def _toggle_ime_to_english():
     time.sleep(random.uniform(0.03, 0.08))
     _send_key(vk=VK_SHIFT, flags=KEYEVENTF_KEYUP)
     time.sleep(random.uniform(0.05, 0.10))
+
+
+# ── Path D: IMM32 composition injection (CJK text) ──
+
+
+def ime_compose(text: str) -> bool:
+    """Inject text through the IMM32 composition pipeline.
+
+    This causes Windows to send WM_IME_COMPOSITION / WM_IME_ENDCOMPOSITION
+    to the target window.  Chrome (via the CUAS compatibility layer) translates
+    these into standard JS composition events — identical to real IME input.
+
+    Returns True on success, False if the IME context is unavailable
+    (caller should fall back to clipboard_paste).
+    """
+    hwnd = user32.GetForegroundWindow()
+    if not hwnd:
+        return False
+    himc = imm32.ImmGetContext(hwnd)
+    if not himc:
+        return False
+    try:
+        byte_len = len(text) * 2  # UTF-16LE: 2 bytes per BMP char
+        ok = imm32.ImmSetCompositionStringW(
+            himc, SCS_SETSTR, text, byte_len, None, 0,
+        )
+        if not ok:
+            return False
+        imm32.ImmNotifyIME(himc, NI_COMPOSITIONSTR, CPS_COMPLETE, 0)
+        time.sleep(random.uniform(0.02, 0.06))
+        return True
+    finally:
+        imm32.ImmReleaseContext(hwnd, himc)
 
 
 # ── Path A: VK physical key simulation (ASCII) ──

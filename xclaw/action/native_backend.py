@@ -89,9 +89,16 @@ class NativeActionBackend:
         has_non_ascii = any(k == "non_ascii" for k, _ in segments)
 
         if has_non_ascii:
-            # Mixed text: KEYEVENTF_UNICODE for all chars (bypasses IME entirely).
-            # VK physical keys are unreliable here because IME Shift toggle
-            # is fragile when interleaved with Unicode input.
+            # Mixed text with CJK / emoji.
+            # ASCII segments: VK physical keys (with IME toggled to English).
+            # Non-ASCII segments: IMM32 composition injection (Path D),
+            #   falling back to clipboard paste (Path B) if IME unavailable.
+            ime_toggled = False
+            has_ascii = any(k == "ascii" for k, _ in segments)
+            if has_ascii and self._keyboard._is_ime_chinese_mode():
+                self._keyboard._toggle_ime_to_english()
+                ime_toggled = True
+
             for kind, segment in segments:
                 if kind == "control":
                     for char in segment:
@@ -100,10 +107,18 @@ class NativeActionBackend:
                             self._keyboard.WIN_VK["return"] if char == "\n"
                             else self._keyboard.WIN_VK["tab"]
                         )
-                else:
+                elif kind == "ascii":
                     for char in segment:
                         self._humanize.type_char_delay()
-                        self._keyboard._type_unicode_char(char)
+                        self._keyboard.type_char_vk(char)
+                else:
+                    # non_ascii: whole segment via IME composition
+                    self._humanize.type_char_delay()
+                    if not self._keyboard.ime_compose(segment):
+                        self._keyboard.clipboard_paste(segment)
+
+            if ime_toggled:
+                self._keyboard._toggle_ime_to_english()
         else:
             # Pure ASCII: VK physical keys (most human-like, no IME complication)
             ime_toggled = False

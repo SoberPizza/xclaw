@@ -91,8 +91,7 @@ xclaw/
 │   ├── __init__.py
 │   └── pipeline.py        # 调试用管线可视化
 └── skills/
-    ├── SKILL.md           # Claude Code 技能入口
-    └── commands.md        # 命令参考
+    └── SKILL.md           # Claude Code 技能入口
 scripts/
 ├── download_models.py     # 模型下载（OmniParser V2）
 ├── export_yolo_onnx.py    # YOLO .pt → .onnx 导出
