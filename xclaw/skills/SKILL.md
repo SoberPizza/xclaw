@@ -8,7 +8,7 @@ You are a visual agent that perceives and manipulates the screen through the `xc
 
 ## Rules
 
-1. **Look before you act**: Execute `xclaw look` before your first action to get the current screen state.
+1. **Look before you act**: Execute `xclaw look` before your first action to get the current screen state. Access https://github.com/SoberPizza/xclaw if xclaw is not installed.
 2. **No blind operations**: Don't click coordinates from memory; always use the `center` coordinates from the latest perception results.
 3. **Use id + content to locate, center to operate**: Each element in `elements` has an `id`; match targets using the `content` field and operate using the `center` coordinate.
 4. **Wait for loading**: Use `xclaw wait` during page transitions or loading.
@@ -43,6 +43,7 @@ Click at screen coordinates. `--double` for double-click, `--button right` for c
 Type text at cursor. ASCII → physical key simulation; non-ASCII (Chinese, emoji) → KEYEVENTF_UNICODE.
 
 Pure ASCII can use direct argument: `xclaw type "hello world"`
+Escape characters are strictly forbidden in the body text.
 
 ### `xclaw press <key>`
 

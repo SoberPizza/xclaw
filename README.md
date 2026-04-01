@@ -1,45 +1,38 @@
 # X-Claw
 
-纯视觉、纯键鼠的跨平台桌面代理框架。模拟真人使用电脑的完整认知回路：
+纯视觉、纯键鼠的 Windows CUDA 桌面代理框架。模拟真人使用电脑的完整认知回路：
 
-**截屏（眼睛）→ YOLO + PaddleOCR + MiniCPM-V 感知（视觉皮层）→ 结构化 JSON（语言区）→ OS 原生键鼠操作（手）**
+**截屏（眼睛）→ YOLO + RapidOCR + Florence-2 感知（视觉皮层）→ 结构化 JSON（语言区）→ OS 原生键鼠操作（手）**
 
 感知层将屏幕像素转化为带编号的元素列表（纯文本 JSON），外部 Agent 的 LLM 仅消费该文本做决策，不接触任何图像数据。
 
-支持 Windows (CUDA) + macOS (Apple Silicon MPS/CoreML)。
-
-## 平台支持
-
-| 平台 | GPU | 键鼠 | 全链路延迟 |
-|------|-----|------|-----------|
-| Windows + NVIDIA GPU | CUDA 12.x（torch cu121） | ctypes SendInput | ~1-1.5s |
-| macOS Apple Silicon (>=16GB) | MPS / CoreML | Quartz CGEvent | ~1.5-2.5s |
-
 ## 环境要求
 
+- Windows 10/11
+- NVIDIA GPU（CUDA 12.x 兼容驱动）
 - Python >= 3.12
 - [uv](https://docs.astral.sh/uv/) 包管理器
-- macOS: Apple Silicon, >=16GB 统一内存, 需授权辅助功能 + 屏幕录制权限
-- Windows: NVIDIA GPU, CUDA 12.x 兼容驱动
 
-## 安装
+## 快速开始
 
 ```bash
-# 克隆项目
+# 1. 克隆项目
 git clone <repo-url> && cd xclaw
 
-# macOS
-uv sync --extra mac
+# 2. 安装依赖（自动从 PyTorch CUDA 12.1 索引获取 torch）
+uv sync
 
-# Windows
-uv sync --extra win
-
-# 下载模型 + 导出 ONNX (~1.3 GB)
+# 3. 下载模型 + 导出 ONNX (~500 MB)
 uv run python scripts/download_models.py
 
-# 验证安装
+# 4. 验证感知管线
 uv run xclaw look
 ```
+
+> 中国用户可设置 HuggingFace 镜像加速模型下载：
+> ```bash
+> HF_ENDPOINT=https://hf-mirror.com uv run python scripts/download_models.py
+> ```
 
 ### 全局安装
 
@@ -49,110 +42,45 @@ uv tool install --editable . --python 3.12
 # 卸载: uv tool uninstall xclaw
 ```
 
-## 项目结构
-
-```
-xclaw/
-├── config.py              # 全局配置（路径、感知参数、人性化参数）
-├── cli.py                 # Click CLI 入口
-├── platform/
-│   ├── detect.py          # 平台检测（系统/架构/内存/GPU）
-│   ├── gpu.py             # 感知引擎硬件配置（CUDA/MPS/CPU 三分支）
-│   └── permissions.py     # macOS 权限检测（辅助功能 + 屏幕录制）
-├── core/
-│   ├── screen.py          # 截屏（mss）
-│   ├── cache.py           # LRU 感知缓存
-│   ├── pipeline.py        # 两层视觉管线：L1 感知 → L2 空间布局
-│   ├── backend_registry.py # BackendRegistry：线程安全感知后端注册表
-│   ├── daemon.py          # 守护进程客户端（Unix Socket / Named Pipe）
-│   ├── daemon_server.py   # 守护进程服务端（模型常驻 + BackendRegistry）
-│   ├── perception/
-│   │   ├── backend.py     # PerceptionBackend 协议（抽象接口）
-│   │   ├── engine.py      # PerceptionEngine 单例：委托 backend 编排
-│   │   ├── pipeline_backend.py # 默认后端：YOLO + OCR + MiniCPM-V
-│   │   ├── omniparser.py  # OmniDetector（YOLO 双后端：ONNX / ultralytics）
-│   │   ├── minicpm_caption.py # MiniCPM-V 2.0 图标描述
-│   │   ├── ocr.py         # PaddleOCR 封装（GPU/CPU 自适应）
-│   │   ├── merger.py      # IoU 去重 + YOLO/OCR 空间融合
-│   │   └── types.py       # RawElement / TextBox 数据类型
-│   ├── context/           # L0-L3 智能感知调度器
-│   │   ├── scheduler.py   # 调度入口：根据动作/状态选择感知等级
-│   │   ├── state.py       # 持久化上下文状态
-│   │   ├── predict.py     # 预测下次所需感知等级
-│   │   ├── peek.py        # L0：快速像素级变化检测
-│   │   ├── glance.py      # L1：局部感知（变化区域 + 缓存融合）
-│   │   └── scroll.py      # 滚动动作专用感知策略
-│   └── spatial/           # 列检测 + 阅读序
-│       ├── column_detector.py # 列检测算法
-│       ├── row_detector.py    # 行检测算法
-│       └── reading_order.py   # 列优先阅读顺序
-├── action/
-│   ├── __init__.py        # ActionBackend 单例（get_backend/set_backend）
-│   ├── backend.py         # ActionBackend 协议（抽象接口）
-│   ├── native_backend.py  # NativeActionBackend：委托平台模块 + HumanizeStrategy
-│   ├── dry_run_backend.py # DryRunBackend：记录动作不触发 OS 事件（测试用）
-│   ├── humanize_strategy.py # HumanizeStrategy 协议 + NoopStrategy / BezierStrategy
-│   ├── humanize.py        # bezier_point() 纯数学工具函数
-│   ├── mouse.py           # 高层点击/滚动接口（委托 ActionBackend）
-│   ├── keyboard.py        # 高层打字/按键接口（委托 ActionBackend）
-│   ├── mouse_darwin.py    # macOS: Quartz CGEvent 鼠标
-│   ├── keyboard_darwin.py # macOS: Quartz CGEvent 键盘
-│   ├── mouse_win32.py     # Windows: ctypes SendInput 鼠标
-│   └── keyboard_win32.py  # Windows: ctypes SendInput 键盘
-├── installer/
-│   ├── postinstall.py     # 安装后初始化（目录结构 + 模型下载 + init）
-│   └── download_gui.py    # Tkinter 模型下载 GUI
-├── debug/
-│   └── pipeline.py        # 调试用管线可视化
-└── skills/                # Claude Code 技能定义
-scripts/
-├── download_models.py     # 跨平台模型下载（OmniParser V2 + PaddleOCR）
-├── export_yolo_onnx.py    # YOLO .pt → .onnx 导出
-├── build_installer.py     # 跨平台安装包构建
-├── installer.iss          # Windows Inno Setup 脚本
-└── macos/                 # macOS 安装包资源
-models/                    # 模型权重 (gitignored)
-```
-
 ## CLI 命令
+
+所有命令输出干净 JSON 到 stdout（供 LLM 消费），`DEBUG=1` 时日志输出到 stderr。
 
 ### 感知
 
 ```bash
-xclaw look                      # 截图 + 智能感知（自动拉起 daemon）
+xclaw look                              # 截图 + 完整感知，输出 JSON
 ```
 
 ### 鼠标操作
 
 ```bash
-xclaw click 500 300             # 单击
-xclaw click 500 300 --double    # 双击
-xclaw scroll down 3             # 向下滚动 3 格
-xclaw scroll up 5               # 向上滚动 5 格
+xclaw click 500 300                     # 左键单击
+xclaw click 500 300 --double            # 双击
+xclaw click 500 300 --button right      # 右键单击
+xclaw move 500 300                      # 移动光标（触发 hover）
+xclaw scroll down 3                     # 向下滚动 3 格
+xclaw scroll up 5                       # 向上滚动 5 格
+xclaw drag 100 200 500 600              # 拖拽
+xclaw hold left down --x 500 --y 300    # 按住鼠标键
+xclaw hold left up --x 500 --y 300      # 释放鼠标键
+xclaw cursor                            # 查询光标位置和屏幕尺寸
 ```
 
 ### 键盘操作
 
 ```bash
-xclaw type "Hello 你好世界"      # 输入文本（中英文/emoji 原生支持）
-xclaw press enter               # 按键
-xclaw press cmd+c               # 组合键 (macOS)
-xclaw press ctrl+c              # 组合键 (Windows)
+xclaw type "Hello 你好世界"              # 输入文本（中英文/emoji 原生支持）
+echo "管道输入" | xclaw type             # 从 stdin 管道输入 UTF-8 文本
+xclaw press enter                       # 按键
+xclaw hotkey ctrl+c                     # 组合键
 ```
 
 ### 等待
 
 ```bash
-xclaw wait 2                    # 等待 2 秒
+xclaw wait 2                            # 等待 2 秒 + 自动感知
 ```
-
-### 紧急停止
-
-```bash
-xclaw stop                      # 强制终结 daemon（仅异常时使用）
-```
-
-守护进程由 `look` 首次调用时自动拉起（模型常驻内存），空闲 5 分钟自动退出，正常情况下无需手动管理。
 
 ## 输出示例
 
@@ -178,39 +106,19 @@ xclaw stop                      # 强制终结 daemon（仅异常时使用）
 ```
 截屏 (mss)
   │
-  ├─→ YOLO icon_detect (ONNX CoreML/CUDA 或 ultralytics)
+  ├─→ YOLO icon_detect (TensorRT EP / CUDA EP / ultralytics)
   │     → 交互元素 bbox
   │
-  ├─→ PaddleOCR v4 (GPU/CPU)
+  ├─→ RapidOCR PPOCRv5 mobile (CUDA)
   │     → 文字区域 + OCR 文本
   │
   └─→ 空间融合 (IoU 去重)
         │
-        └─→ MiniCPM-V 2.0 caption (条件式: 仅无文字的图标)
+        └─→ Florence-2 caption (条件式: 仅无文字的图标)
               → 图标语义描述
 ```
 
-MiniCPM-V 仅在图标没有文字覆盖时触发（条件式调用），大幅节省推理时间。
-
-## 平台适配
-
-| 组件 | Windows | macOS Apple Silicon |
-|------|---------|---------------------|
-| 键鼠控制 | ctypes `SendInput` | Quartz `CGEvent` |
-| YOLO 检测 | ONNX CUDA / ultralytics | ONNX CoreML / ultralytics |
-| OCR | PaddleOCR CPU (PaddlePaddle 3.x) | PaddleOCR CPU + MKL-DNN (PaddlePaddle 3.x) |
-| MiniCPM-V | CUDA FP16 | CPU FP32（MPS 有 gather bug） |
-| 守护进程 IPC | Named Pipe | Unix Domain Socket |
-| torch 索引 | `pytorch-cu121` | PyPI 默认（MPS） |
-| PaddlePaddle | `paddlepaddle` CPU (PyPI) | `paddlepaddle` CPU (PyPI) |
-
-### 自定义包索引
-
-项目通过 `[tool.uv.index]` + `[tool.uv.sources]` 配置了一个自定义索引：
-
-- **pytorch-cu121** — Windows/Linux 的 PyTorch CUDA 12.1 wheels
-
-PaddlePaddle 统一使用 PyPI 上的 CPU 版 `paddlepaddle`，OCR ~180ms 不需要 GPU 加速，且避免了 `nvidia-cudnn-cu12` 版本冲突。
+Florence-2 仅在图标没有文字覆盖时触发（条件式调用），大幅节省推理时间。
 
 ## 人性化模式
 
@@ -220,7 +128,7 @@ PaddlePaddle 统一使用 PyPI 上的 CPU 版 `paddlepaddle`，OCR ~180ms 不需
 XCLAW_HUMANIZE=1 xclaw click 500 300
 ```
 
-- `XCLAW_HUMANIZE=1` 时自动使用 `BezierStrategy`，否则用 `NoopStrategy`
+- `BezierStrategy`：Fitts' Law 距离自适应时长 + 贝塞尔曲线轨迹 + 概率性过冲修正 + 微颤抖
 - 所有操作路径均经过 `HumanizeStrategy` 层，无绕过通道
 
 ## 环境变量
@@ -229,49 +137,35 @@ XCLAW_HUMANIZE=1 xclaw click 500 300
 |------|------|------|
 | `XCLAW_HUMANIZE` | 设为 `1` 启用人性化鼠标/键盘行为 | `0` |
 | `XCLAW_HOME` | 项目根目录路径（仅非 editable 安装时需要） | 自动推算 |
-| `XCLAW_DATA` | 用户可写数据目录（截图、日志、模型） | 开发模式=PROJECT_ROOT，安装模式=平台用户目录 |
+| `XCLAW_DATA` | 用户可写数据目录（截图、日志、模型） | 开发模式=项目根目录，安装模式=`%LOCALAPPDATA%\X-Claw` |
+| `XCLAW_TRT` | 设为 `0` 禁用 TensorRT EP（回退 CUDA EP） | `1` |
+| `DEBUG` | 设为 `1` 启用 CLI 调试日志输出到 stderr | `0` |
+| `HF_ENDPOINT` | HuggingFace 镜像 URL（中国用户） | 默认官方 |
 
-## 测试
+## 开发
+
+### 测试
 
 ```bash
 uv run pytest                        # 默认测试（排除 gpu/bench）
-uv run pytest -m gpu                 # GPU + 模型测试
-uv run pytest -m integration         # 集成测试（需要 screenshots/）
+uv run pytest -m gpu                 # 需要 GPU + 模型
 ```
 
-## 安装包构建
-
-轻量安装包仅含 xclaw 源码 + uv 二进制（~30MB），首次启动自动在线安装 Python、依赖和模型。
+### 模型管理
 
 ```bash
-# macOS (.pkg)
-python scripts/build_installer.py --platform macos    # → dist/XClaw-x.x.x.pkg
+# 重新下载全部模型
+uv run python scripts/download_models.py
 
+# 单独重新导出 YOLO ONNX
+uv run python scripts/export_yolo_onnx.py
+```
+
+模型存放在 `models/` 目录（gitignored），搜索顺序：`PROJECT_ROOT/models` → `weights/` → `DATA_DIR/models` → `~/.xclaw/models/`。
+
+### 安装包构建
+
+```bash
 # Windows (需要 Inno Setup)
 python scripts/build_installer.py --platform windows  # → dist/XClaw-x.x.x-Setup.exe
 ```
-
-### 路径架构（安装模式 vs 开发模式）
-
-| 路径 | 开发模式 | 安装模式 |
-|------|---------|---------|
-| `PROJECT_ROOT` | 项目根目录 | `.app/Contents/Resources/xclaw-src` |
-| `DATA_DIR` | = PROJECT_ROOT | macOS: `~/Library/Application Support/X-Claw`，Windows: `%LOCALAPPDATA%\X-Claw` |
-| `MODELS_DIR` | `PROJECT_ROOT/models` | `DATA_DIR/models` |
-| `SCREENSHOTS_DIR` | `PROJECT_ROOT/screenshots` | `DATA_DIR/screenshots` |
-
-### 用户安装流程
-
-1. 双击安装包（.pkg / .exe）
-2. 首次启动自动执行 `uv sync` 安装 Python + 依赖（~1.5GB）
-3. Tkinter GUI 下载模型（~1.3GB）
-4. `xclaw look` 验证感知管线正常工作
-5. 完成
-
-## 注意事项
-
-- macOS 首次运行需在系统设置中授权「辅助功能」和「屏幕录制」权限
-- 模型下载支持 `HF_ENDPOINT` 环境变量设置镜像（中国用户）
-- OmniParser 源码位于 `OmniParser/` 目录
-- 图标描述使用 MiniCPM-V 2.0（`openbmb/MiniCPM-V-2`），模型自带代码已针对 transformers 5.x 做了兼容性补丁
-- 模型存放在 `models/`（首选）或 `weights/`（向后兼容）目录，通过 `huggingface-hub` 下载
