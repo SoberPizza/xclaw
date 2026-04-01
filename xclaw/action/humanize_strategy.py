@@ -221,10 +221,14 @@ class BezierStrategy:
         time.sleep(lognormal_delay(0.07, sigma=0.25, lo=0.03, hi=0.20))
 
     def pre_key_delay(self) -> None:
-        time.sleep(lognormal_delay(0.06, sigma=0.4, lo=0.02, hi=0.30))
+        lo, hi = self.key_delay_range
+        median = (lo + hi) / 2
+        time.sleep(lognormal_delay(median, sigma=0.4, lo=lo * 0.6, hi=hi * 2.0))
 
     def type_char_delay(self) -> None:
-        time.sleep(lognormal_delay(0.08, sigma=0.35, lo=0.03, hi=0.40))
+        lo, hi = self.type_delay_range
+        median = (lo + hi) / 2
+        time.sleep(lognormal_delay(median, sigma=0.35, lo=lo * 0.6, hi=hi * 2.7))
 
     def scroll_chunk(self, remaining: int) -> int:
         chunk_min = max(1, remaining // 5)

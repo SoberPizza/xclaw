@@ -87,60 +87,37 @@ class NativeActionBackend:
         self._ensure_platform()
         segments = self._keyboard._split_text(text)
         has_non_ascii = any(k == "non_ascii" for k, _ in segments)
+        has_ascii = any(k == "ascii" for k, _ in segments)
 
-        if has_non_ascii:
-            # Mixed text with CJK / emoji.
-            # ASCII segments: VK physical keys (with IME toggled to English).
-            # Non-ASCII segments: IMM32 composition injection (Path D),
-            #   falling back to clipboard paste (Path B) if IME unavailable.
-            ime_toggled = False
-            has_ascii = any(k == "ascii" for k, _ in segments)
-            if has_ascii and self._keyboard._is_ime_chinese_mode():
-                self._keyboard._toggle_ime_to_english()
-                ime_toggled = True
+        # Toggle IME to English mode if ASCII segments need VK input
+        ime_toggled = False
+        if has_ascii and self._keyboard._is_ime_chinese_mode():
+            self._keyboard._toggle_ime_to_english()
+            ime_toggled = True
 
-            for kind, segment in segments:
-                if kind == "control":
-                    for char in segment:
-                        self._humanize.type_char_delay()
-                        self._keyboard._press_release_vk(
-                            self._keyboard.WIN_VK["return"] if char == "\n"
-                            else self._keyboard.WIN_VK["tab"]
-                        )
-                elif kind == "ascii":
-                    for char in segment:
-                        self._humanize.type_char_delay()
-                        self._keyboard.type_char_vk(char)
-                else:
-                    # non_ascii: whole segment via IME composition
+        for kind, segment in segments:
+            if kind == "control":
+                for char in segment:
+                    if char == "\r":
+                        continue  # skip CR (CRLF; \n handles Enter)
                     self._humanize.type_char_delay()
-                    if not self._keyboard.ime_compose(segment):
-                        self._keyboard.clipboard_paste(segment)
+                    self._keyboard._press_release_vk(
+                        self._keyboard.WIN_VK["return"] if char == "\n"
+                        else self._keyboard.WIN_VK["tab"]
+                    )
+            elif kind == "ascii":
+                for char in segment:
+                    self._humanize.type_char_delay()
+                    self._keyboard.type_char_vk(char)
+            else:
+                # non_ascii: whole segment via IME composition,
+                # falling back to clipboard paste if IME unavailable
+                self._humanize.type_char_delay()
+                if not self._keyboard.ime_compose(segment):
+                    self._keyboard.clipboard_paste(segment)
 
-            if ime_toggled:
-                self._keyboard._toggle_ime_to_english()
-        else:
-            # Pure ASCII: VK physical keys (most human-like, no IME complication)
-            ime_toggled = False
-            if self._keyboard._is_ime_chinese_mode():
-                self._keyboard._toggle_ime_to_english()
-                ime_toggled = True
-
-            for kind, segment in segments:
-                if kind == "control":
-                    for char in segment:
-                        self._humanize.type_char_delay()
-                        self._keyboard._press_release_vk(
-                            self._keyboard.WIN_VK["return"] if char == "\n"
-                            else self._keyboard.WIN_VK["tab"]
-                        )
-                elif kind == "ascii":
-                    for char in segment:
-                        self._humanize.type_char_delay()
-                        self._keyboard.type_char_vk(char)
-
-            if ime_toggled:
-                self._keyboard._toggle_ime_to_english()
+        if ime_toggled:
+            self._keyboard._toggle_ime_to_english()
 
         return {"status": "ok", "action": "type", "text": text}
 

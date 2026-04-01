@@ -116,6 +116,7 @@ WIN_MOD_VK = {
 
 VK_SHIFT = 0x10
 VK_CONTROL = 0x11
+VK_MENU = 0x12  # Alt key
 
 
 class KEYBDINPUT(ctypes.Structure):
@@ -253,7 +254,7 @@ def ime_compose(text: str) -> bool:
     if not himc:
         return False
     try:
-        byte_len = len(text) * 2  # UTF-16LE: 2 bytes per BMP char
+        byte_len = len(text.encode("utf-16-le"))
         ok = imm32.ImmSetCompositionStringW(
             himc, SCS_SETSTR, text, byte_len, None, 0,
         )
@@ -273,10 +274,11 @@ def type_char_vk(char: str):
     """Type a single ASCII character using VK physical key simulation.
 
     Uses VkKeyScanW to map the character to VK + shift state for the
-    current keyboard layout. Falls back to KEYEVENTF_UNICODE if the
-    character has no VK mapping.
+    current keyboard layout. Handles Shift, Ctrl, and Alt modifiers
+    (needed for AltGr characters on non-US layouts).
+    Falls back to KEYEVENTF_UNICODE if the character has no VK mapping.
     """
-    result = user32.VkKeyScanW(ord(char))
+    result = user32.VkKeyScanW(char)
     if result == -1:
         # No VK mapping on current layout — fallback
         _type_unicode_char(char)
@@ -285,7 +287,16 @@ def type_char_vk(char: str):
     vk = result & 0xFF
     shift_state = (result >> 8) & 0xFF
     need_shift = bool(shift_state & 0x01)
+    need_ctrl = bool(shift_state & 0x02)
+    need_alt = bool(shift_state & 0x04)
 
+    # Press modifiers
+    if need_ctrl:
+        _send_key(vk=VK_CONTROL)
+        time.sleep(random.uniform(0.01, 0.03))
+    if need_alt:
+        _send_key(vk=VK_MENU)
+        time.sleep(random.uniform(0.01, 0.03))
     if need_shift:
         _send_key(vk=VK_SHIFT)
         time.sleep(random.uniform(0.01, 0.03))
@@ -294,9 +305,16 @@ def type_char_vk(char: str):
     time.sleep(random.uniform(0.02, 0.06))
     _send_key(vk=vk, flags=KEYEVENTF_KEYUP)
 
+    # Release modifiers (reverse order)
     if need_shift:
         time.sleep(random.uniform(0.01, 0.03))
         _send_key(vk=VK_SHIFT, flags=KEYEVENTF_KEYUP)
+    if need_alt:
+        time.sleep(random.uniform(0.01, 0.03))
+        _send_key(vk=VK_MENU, flags=KEYEVENTF_KEYUP)
+    if need_ctrl:
+        time.sleep(random.uniform(0.01, 0.03))
+        _send_key(vk=VK_CONTROL, flags=KEYEVENTF_KEYUP)
 
 
 # ── Path B: Clipboard paste (non-ASCII) ──
@@ -407,6 +425,7 @@ def type_text(text: str):
                     _press_release_vk(WIN_VK["return"])
                 elif char == "\t":
                     _press_release_vk(WIN_VK["tab"])
+                # \r is silently skipped (CR in CRLF; \n handles Enter)
         elif kind == "ascii":
             for char in segment:
                 type_char_vk(char)
@@ -444,7 +463,7 @@ def _split_text(text: str) -> list[tuple[str, str]]:
 
 
 def _char_kind(char: str) -> str:
-    if char in ("\n", "\t"):
+    if char in ("\n", "\t", "\r"):
         return "control"
     if 0x20 <= ord(char) <= 0x7E:
         return "ascii"
